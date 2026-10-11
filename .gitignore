@@ -1,0 +1,7 @@
+__pycache__/
+.idea/
+*.pyc
+*.pth
+model_cache/
+backup/
+*.log
