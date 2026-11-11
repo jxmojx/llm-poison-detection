@@ -1,7 +1,32 @@
 __pycache__/
-.idea/
 *.pyc
+.idea/
+.venv/
+*.log
+
+# 大文件：模型权重
 *.pth
+*.pt
+*.safetensors
 model_cache/
 backup/
-*.log
+
+# 生成的产物(可重跑)
+outputs/cache/
+# 图要提交：README 和 docs/实验报告.md 直接引用它们(共约 1.2MB)，否则 GitHub 上图片是坏的
+# outputs/figures/*.png
+data/processed/
+data/processed_*/
+outputs/qwen/
+
+# 真实语料缓存(由 cli download 重建)
+data/raw/real_tnews.txt
+data/raw/real_*.txt
+
+.pytest_cache/
+
+# 注意：docs/与 outputs/metrics/*.json 要提交——它们是轻量、可review的实验结论
+
+# 发布物/批扫产物：可重跑生成，不进仓库（体积大且随域变化）
+outputs/deploy/
+outputs/scan/

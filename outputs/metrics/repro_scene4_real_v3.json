@@ -1,0 +1,240 @@
+{
+  "meta": {
+    "data": {
+      "n": 5997,
+      "family_counts": {
+        "normal": 2844,
+        "ood": 500,
+        "template": 500,
+        "paraphrase": 500,
+        "subtle": 500,
+        "backdoor": 500,
+        "edit": 500,
+        "hardneg": 153
+      },
+      "student_sec": 3.94
+    },
+    "intercept": {
+      "n": 320,
+      "n_edit_samples": 40,
+      "judge_full_intercept": 21,
+      "judge_thr": 0.5
+    },
+    "student": "student_judge_real_v3.pkl",
+    "note": "诚实口径：排序层与学生模型、复核层与判官分严格分开；含判官自排序对照"
+  },
+  "recall_layer": {
+    "1.0%": {
+      "topk": 60,
+      "in_bucket": {
+        "normal": 28,
+        "ood": 0,
+        "template": 4,
+        "paraphrase": 4,
+        "subtle": 13,
+        "backdoor": 3,
+        "edit": 2,
+        "hardneg": 6
+      },
+      "edit_recall": 0.004,
+      "random_expected_edit": 5.0,
+      "edit_lift_vs_random": 0.4,
+      "in_template": 4,
+      "template_lift": 0.8,
+      "in_paraphrase": 4,
+      "paraphrase_lift": 0.8,
+      "in_subtle": 13,
+      "subtle_lift": 2.6,
+      "in_backdoor": 3,
+      "backdoor_lift": 0.6
+    },
+    "2.0%": {
+      "topk": 120,
+      "in_bucket": {
+        "normal": 64,
+        "ood": 0,
+        "template": 10,
+        "paraphrase": 11,
+        "subtle": 19,
+        "backdoor": 4,
+        "edit": 5,
+        "hardneg": 7
+      },
+      "edit_recall": 0.01,
+      "random_expected_edit": 10.0,
+      "edit_lift_vs_random": 0.5,
+      "in_template": 10,
+      "template_lift": 1.0,
+      "in_paraphrase": 11,
+      "paraphrase_lift": 1.1,
+      "in_subtle": 19,
+      "subtle_lift": 1.9,
+      "in_backdoor": 4,
+      "backdoor_lift": 0.4
+    },
+    "5.0%": {
+      "topk": 300,
+      "in_bucket": {
+        "normal": 123,
+        "ood": 0,
+        "template": 58,
+        "paraphrase": 51,
+        "subtle": 34,
+        "backdoor": 5,
+        "edit": 18,
+        "hardneg": 11
+      },
+      "edit_recall": 0.036,
+      "random_expected_edit": 25.0,
+      "edit_lift_vs_random": 0.72,
+      "in_template": 58,
+      "template_lift": 2.32,
+      "in_paraphrase": 51,
+      "paraphrase_lift": 2.04,
+      "in_subtle": 34,
+      "subtle_lift": 1.36,
+      "in_backdoor": 5,
+      "backdoor_lift": 0.2
+    },
+    "10.0%": {
+      "topk": 600,
+      "in_bucket": {
+        "normal": 217,
+        "ood": 0,
+        "template": 133,
+        "paraphrase": 143,
+        "subtle": 58,
+        "backdoor": 5,
+        "edit": 30,
+        "hardneg": 14
+      },
+      "edit_recall": 0.06,
+      "random_expected_edit": 50.0,
+      "edit_lift_vs_random": 0.6,
+      "in_template": 133,
+      "template_lift": 2.66,
+      "in_paraphrase": 143,
+      "paraphrase_lift": 2.86,
+      "in_subtle": 58,
+      "subtle_lift": 1.16,
+      "in_backdoor": 5,
+      "backdoor_lift": 0.1
+    },
+    "20.0%": {
+      "topk": 1199,
+      "in_bucket": {
+        "normal": 393,
+        "ood": 0,
+        "template": 290,
+        "paraphrase": 269,
+        "subtle": 148,
+        "backdoor": 8,
+        "edit": 65,
+        "hardneg": 26
+      },
+      "edit_recall": 0.13,
+      "random_expected_edit": 100.0,
+      "edit_lift_vs_random": 0.65,
+      "in_template": 290,
+      "template_lift": 2.9,
+      "in_paraphrase": 269,
+      "paraphrase_lift": 2.69,
+      "in_subtle": 148,
+      "subtle_lift": 1.48,
+      "in_backdoor": 8,
+      "backdoor_lift": 0.08
+    },
+    "30.0%": {
+      "topk": 1799,
+      "in_bucket": {
+        "normal": 649,
+        "ood": 8,
+        "template": 383,
+        "paraphrase": 353,
+        "subtle": 237,
+        "backdoor": 18,
+        "edit": 104,
+        "hardneg": 47
+      },
+      "edit_recall": 0.208,
+      "random_expected_edit": 150.0,
+      "edit_lift_vs_random": 0.69,
+      "in_template": 383,
+      "template_lift": 2.55,
+      "in_paraphrase": 353,
+      "paraphrase_lift": 2.35,
+      "in_subtle": 237,
+      "subtle_lift": 1.58,
+      "in_backdoor": 18,
+      "backdoor_lift": 0.12
+    },
+    "40.0%": {
+      "topk": 2399,
+      "in_bucket": {
+        "normal": 962,
+        "ood": 29,
+        "template": 451,
+        "paraphrase": 406,
+        "subtle": 303,
+        "backdoor": 37,
+        "edit": 143,
+        "hardneg": 68
+      },
+      "edit_recall": 0.286,
+      "random_expected_edit": 200.0,
+      "edit_lift_vs_random": 0.71,
+      "in_template": 451,
+      "template_lift": 2.25,
+      "in_paraphrase": 406,
+      "paraphrase_lift": 2.03,
+      "in_subtle": 303,
+      "subtle_lift": 1.51,
+      "in_backdoor": 37,
+      "backdoor_lift": 0.18
+    }
+  },
+  "intercept_layer": {
+    "1.0%": {
+      "topk": 3,
+      "edit_intercept_student_rank": 0,
+      "edit_intercept_judge_self_rank": 0,
+      "edit_intercept_random": 1
+    },
+    "2.0%": {
+      "topk": 6,
+      "edit_intercept_student_rank": 0,
+      "edit_intercept_judge_self_rank": 0,
+      "edit_intercept_random": 1
+    },
+    "5.0%": {
+      "topk": 16,
+      "edit_intercept_student_rank": 2,
+      "edit_intercept_judge_self_rank": 0,
+      "edit_intercept_random": 2
+    },
+    "10.0%": {
+      "topk": 32,
+      "edit_intercept_student_rank": 2,
+      "edit_intercept_judge_self_rank": 0,
+      "edit_intercept_random": 4
+    },
+    "20.0%": {
+      "topk": 64,
+      "edit_intercept_student_rank": 2,
+      "edit_intercept_judge_self_rank": 1,
+      "edit_intercept_random": 2
+    },
+    "30.0%": {
+      "topk": 96,
+      "edit_intercept_student_rank": 4,
+      "edit_intercept_judge_self_rank": 4,
+      "edit_intercept_random": 5
+    },
+    "40.0%": {
+      "topk": 128,
+      "edit_intercept_student_rank": 7,
+      "edit_intercept_judge_self_rank": 8,
+      "edit_intercept_random": 7
+    }
+  }
+}

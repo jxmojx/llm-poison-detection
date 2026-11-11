@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # 只装 CPU 侧轻量依赖：单元测试刻意不加载任何模型权重，
+      # 这样 CI 几分钟内能跑完，不需要 GPU 也不需要下载 GB 级 checkpoint。
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e ".[serve,dev]"
+
+      - name: Static checks (syntax + undefined names)
+        run: |
+          python -m pip install ruff
+          ruff check --select E9,F63,F7,F82 poisonguard tests
+
+      - name: Unit tests
+        run: python -m pytest tests/ -q
+
+      # 流水线接线冒烟：不碰模型，只验证 data→stats 两个环节能跑通。
+      # 缺少原始语料时不算失败（仓库可能不带数据）。
+      - name: Pipeline smoke (data stage)
+        continue-on-error: true
+        run: |
+          python -m poisonguard.cli data --run-tag ci
+          python -m poisonguard.cli doctor --run-tag ci

@@ -1,0 +1,65 @@
+{
+  "n_dev": 151,
+  "n_test": 292,
+  "train_sec": 0.081,
+  "student_ms_per_item": 0.1041,
+  "features": 2408,
+  "n_negative_ngram": 1640,
+  "threshold": 0.5,
+  "comparison": {
+    "teacher": {
+      "auroc": 0.7829,
+      "auprc": 0.8978,
+      "tpr@fpr1%": 0.175,
+      "ms_per_item": 1.3594
+    },
+    "student": {
+      "auroc": 0.7516,
+      "auprc": 0.8755,
+      "tpr@fpr1%": 0.14,
+      "ms_per_item": 0.1041
+    }
+  },
+  "student_family_recall": {
+    "template": {
+      "n": 40,
+      "recall": 1.0
+    },
+    "paraphrase": {
+      "n": 40,
+      "recall": 0.8
+    },
+    "subtle": {
+      "n": 40,
+      "recall": 0.775
+    },
+    "backdoor": {
+      "n": 40,
+      "recall": 0.275
+    },
+    "edit": {
+      "n": 40,
+      "recall": 0.525
+    }
+  },
+  "student_metrics": {
+    "threshold": 0.5,
+    "tp": 135,
+    "fp": 33,
+    "tn": 59,
+    "fn": 65,
+    "precision": 0.8036,
+    "recall": 0.675,
+    "f1": 0.7337,
+    "fpr": 0.3587,
+    "accuracy": 0.6644,
+    "auroc": 0.7516,
+    "auprc": 0.8755,
+    "tpr_at_fpr1": 0.14,
+    "tpr_at_fpr5": 0.345,
+    "n": 292
+  },
+  "auroc_drop": 0.0313,
+  "speedup": 13060.9,
+  "model_path": "D:\\Data\\PycharmFile\\netsafe\\outputs\\metrics\\student_judge_afqmc.pkl"
+}

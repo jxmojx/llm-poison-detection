@@ -1,0 +1,74 @@
+# poisonguard 默认配置
+# 所有路径相对仓库根目录；命令行参数优先级更高(如 --encoder bge)。
+#
+# 本机(RTX 4060 Laptop 8GB / i7-13650HX / 16GB RAM)默认走 CPU 也能跑完主实验，
+# 因为编码器选的是**本地已下载**的 CoROM(base, 102M)，且句长只有 ~25 字。
+
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  normal_file: normal_data_2w.csv
+  poison_file: poison_data_2k.csv
+  seed: 42
+  train_ratio: 0.70
+  dev_ratio: 0.15
+  dedupe: true          # 必开：原始数据 75% 重复
+  max_normal: 20000
+
+attack:
+  families: [template, paraphrase, subtle, backdoor]
+  n_per_family: 500     # 测试集每家族目标数量
+  dev_n_per_family: 200 # dev 每家族目标数量
+  dev_seed: 2024
+  test_seed: 7
+  n_ood_dev: 300
+  n_ood_test: 500
+
+encoder:
+  # crom(本地, 102M, 768d) / bge(BAAI/bge-small-zh-v1.5, 24M) / qwen3(Qwen3-Embedding-0.6B)
+  name: crom
+  model_dir: model_cache/damo/nlp_corom_sentence-embedding_chinese-base
+  batch_size: 64
+  max_length: 64
+  device: auto          # auto → 有 CUDA 就用 GPU，否则 CPU
+  cache_dir: outputs/cache
+  normalize: true       # L2 归一化后余弦距离才有意义
+
+detector:
+  target_fpr: 0.01      # 阈值按"干净 dev 上 1% 误报"校准，而不是拍脑袋的 0.5
+  knn_k: 5
+  pca_dim: 64
+  keywords: [低下, 无风险, 回报率, 无需吃药, 治愈, 抵制, 反对, 虚假, 恶意, 煽动]
+  # keyword=复刻原项目的规则法(弱基线) / 中间四个=无监督 / sup_lr=有监督(embedding)
+  # sup_tfidf=词面基线(字符 n-gram，不需要分词)
+  enable: [keyword, centroid, knn, mahalanobis, iforest, sup_lr, sup_tfidf, fusion]
+
+victim:
+  kind: bert
+  model_dir: model_cache/damo/nlp_corom_sentence-embedding_chinese-base
+  weights: baseline_model.pth
+  max_length: 128
+  batch_size: 32
+
+qwen:
+  enabled: true
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  fallback_model_id: Qwen/Qwen2.5-0.5B-Instruct
+  few_shot: true
+  local_dir: outputs/qwen/Qwen2.5-1.5B-Instruct
+  # QLoRA 训练超参(8GB 显存实测可跑，见 docs/优化方案.md 的显存预算表)
+  load_in_4bit: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  max_seq_len: 512
+  per_device_batch: 2
+  grad_accum: 8
+  lr: 0.0002
+  epochs: 2
+  max_steps: -1
+
+outputs_dir: outputs
+figures_dir: outputs/figures
+metrics_dir: outputs/metrics

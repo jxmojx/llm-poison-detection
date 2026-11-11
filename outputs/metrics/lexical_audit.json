@@ -1,0 +1,132 @@
+{
+  "clean_train_size": 3497,
+  "clean_ngram_vocab": 994,
+  "fitted_ngram_vocab": 6700,
+  "oov_ngram_count": 5745,
+  "oov_ngram_ratio": 0.8575,
+  "oov_weight_share": 0.4918,
+  "in_vocab_weight_share": 0.5082,
+  "in_vocab_only_auroc_in_sample": 0.8956,
+  "top_ngrams": [
+    {
+      "ngram": "。 ",
+      "oov": true,
+      "coef": -2.259,
+      "weight": 0.0116
+    },
+    {
+      "ngram": "文化",
+      "oov": false,
+      "coef": -1.375,
+      "weight": 0.0066
+    },
+    {
+      "ngram": "生活",
+      "oov": false,
+      "coef": -1.335,
+      "weight": 0.0056
+    },
+    {
+      "ngram": "技术",
+      "oov": false,
+      "coef": -1.143,
+      "weight": 0.005
+    },
+    {
+      "ngram": "内部",
+      "oov": true,
+      "coef": 1.788,
+      "weight": 0.0038
+    },
+    {
+      "ngram": " 健",
+      "oov": false,
+      "coef": -1.257,
+      "weight": 0.0037
+    },
+    {
+      "ngram": " 健康",
+      "oov": false,
+      "coef": -1.257,
+      "weight": 0.0037
+    },
+    {
+      "ngram": "域 ",
+      "oov": false,
+      "coef": -1.125,
+      "weight": 0.0035
+    },
+    {
+      "ngram": "领域 ",
+      "oov": false,
+      "coef": -1.125,
+      "weight": 0.0035
+    },
+    {
+      "ngram": "点在于",
+      "oov": false,
+      "coef": -1.096,
+      "weight": 0.0035
+    },
+    {
+      "ngram": "点在",
+      "oov": false,
+      "coef": -1.096,
+      "weight": 0.0035
+    },
+    {
+      "ngram": "在于",
+      "oov": false,
+      "coef": -1.096,
+      "weight": 0.0035
+    },
+    {
+      "ngram": "便利",
+      "oov": false,
+      "coef": -1.01,
+      "weight": 0.0034
+    },
+    {
+      "ngram": "种常见",
+      "oov": false,
+      "coef": -1.022,
+      "weight": 0.0032
+    },
+    {
+      "ngram": "一种",
+      "oov": false,
+      "coef": -1.022,
+      "weight": 0.0032
+    },
+    {
+      "ngram": "领域",
+      "oov": false,
+      "coef": -1.022,
+      "weight": 0.0032
+    },
+    {
+      "ngram": "是一",
+      "oov": false,
+      "coef": -1.022,
+      "weight": 0.0032
+    },
+    {
+      "ngram": "泛应",
+      "oov": false,
+      "coef": -1.022,
+      "weight": 0.0032
+    },
+    {
+      "ngram": "广泛应",
+      "oov": false,
+      "coef": -1.022,
+      "weight": 0.0032
+    },
+    {
+      "ngram": "，广",
+      "oov": false,
+      "coef": -1.022,
+      "weight": 0.0032
+    }
+  ]
+}

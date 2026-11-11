@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poisonguard"
+version = "0.3.0"
+description = "中文训练数据投毒检测：语义近似 / 判官 / 行为信号三视图流水线"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "netsafe" }]
+keywords = ["data-poisoning", "llm-security", "detection", "chinese-nlp"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "scikit-learn>=1.3",
+  "pandas>=2.0",
+  "matplotlib>=3.7",
+  "PyYAML>=6.0",
+  "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+# 编码器与判官需要重依赖，按需安装：pip install -e ".[judge]"
+judge = ["torch>=2.1", "transformers>=4.40,<5", "safetensors>=0.4"]
+serve = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+poisonguard = "poisonguard.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["poisonguard*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]

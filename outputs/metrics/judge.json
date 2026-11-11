@@ -1,0 +1,70 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "few_shot": true,
+  "n": 240,
+  "parse_fail": 0,
+  "detectors": {
+    "judge_Qwen2.5-0.5B-Instruct": {
+      "threshold": 0.5,
+      "tp": 114,
+      "fp": 24,
+      "tn": 56,
+      "fn": 46,
+      "precision": 0.8261,
+      "recall": 0.7125,
+      "f1": 0.7651,
+      "fpr": 0.3,
+      "accuracy": 0.7083,
+      "auroc": 0.7062,
+      "auprc": 0.7803,
+      "tpr_at_fpr1": 0.0,
+      "tpr_at_fpr5": 0.0,
+      "n": 240,
+      "parse_fail": 0
+    },
+    "cascade(kNN→judge)": {
+      "threshold": 0.5,
+      "tp": 20,
+      "fp": 1,
+      "tn": 59,
+      "fn": 100,
+      "precision": 0.9524,
+      "recall": 0.1667,
+      "f1": 0.2837,
+      "fpr": 0.0167,
+      "accuracy": 0.4389,
+      "auroc": 0.575,
+      "auprc": 0.7143,
+      "tpr_at_fpr1": 0.0,
+      "tpr_at_fpr5": 0.1667,
+      "n": 180
+    }
+  },
+  "family_recall": {
+    "judge_Qwen2.5-0.5B-Instruct": {
+      "template": {
+        "n": 40,
+        "recall": 1.0
+      },
+      "paraphrase": {
+        "n": 40,
+        "recall": 0.875
+      },
+      "subtle": {
+        "n": 40,
+        "recall": 0.85
+      },
+      "backdoor": {
+        "n": 40,
+        "recall": 0.125
+      }
+    }
+  },
+  "cascade": {
+    "n_total": 180,
+    "n_llm": 35,
+    "llm_ratio": 0.1944,
+    "n_eval": 180
+  },
+  "note": "若为 judge_heuristic 则说明本机无 Qwen 权重，仅用于跑通链路，不计入主结论"
+}

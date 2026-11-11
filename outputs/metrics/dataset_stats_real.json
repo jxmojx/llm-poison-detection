@@ -1,0 +1,54 @@
+{
+  "raw": {
+    "normal_data_2w.csv": {
+      "rows": 20000,
+      "unique": 4997,
+      "dup_ratio": 0.7501,
+      "max_repeat": 12,
+      "avg_chars": 24.0
+    },
+    "poison_data_2k.csv": {
+      "rows": 2000,
+      "unique": 376,
+      "dup_ratio": 0.812,
+      "max_repeat": 38,
+      "avg_chars": 27.5
+    }
+  },
+  "splits": {
+    "train": {
+      "total": 13485,
+      "positive": 0,
+      "by_family": {
+        "normal": 13485
+      },
+      "avg_chars": 22.3
+    },
+    "dev": {
+      "total": 3989,
+      "positive": 800,
+      "by_family": {
+        "normal": 2889,
+        "ood": 300,
+        "template": 200,
+        "paraphrase": 200,
+        "subtle": 200,
+        "backdoor": 200
+      },
+      "avg_chars": 25.5
+    },
+    "test": {
+      "total": 5391,
+      "positive": 2000,
+      "by_family": {
+        "normal": 2891,
+        "ood": 500,
+        "template": 500,
+        "paraphrase": 500,
+        "subtle": 500,
+        "backdoor": 500
+      },
+      "avg_chars": 28.7
+    }
+  }
+}

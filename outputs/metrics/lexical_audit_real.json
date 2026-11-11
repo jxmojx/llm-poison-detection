@@ -1,0 +1,132 @@
+{
+  "clean_train_size": 13485,
+  "clean_ngram_vocab": 336645,
+  "fitted_ngram_vocab": 17580,
+  "oov_ngram_count": 4881,
+  "oov_ngram_ratio": 0.2776,
+  "oov_weight_share": 0.3565,
+  "in_vocab_weight_share": 0.6435,
+  "in_vocab_only_auroc_in_sample": 1.0,
+  "top_ngrams": [
+    {
+      "ngram": "？ ",
+      "oov": false,
+      "coef": -4.243,
+      "weight": 0.0617
+    },
+    {
+      "ngram": "！ ",
+      "oov": false,
+      "coef": -2.621,
+      "weight": 0.0168
+    },
+    {
+      "ngram": "。 ",
+      "oov": false,
+      "coef": 4.726,
+      "weight": 0.0122
+    },
+    {
+      "ngram": "什么",
+      "oov": false,
+      "coef": -1.174,
+      "weight": 0.0081
+    },
+    {
+      "ngram": "内部",
+      "oov": false,
+      "coef": 3.284,
+      "weight": 0.0076
+    },
+    {
+      "ngram": "吗？",
+      "oov": false,
+      "coef": -1.224,
+      "weight": 0.0055
+    },
+    {
+      "ngram": "吗？ ",
+      "oov": false,
+      "coef": -1.061,
+      "weight": 0.0043
+    },
+    {
+      "ngram": "） ",
+      "oov": false,
+      "coef": 1.642,
+      "weight": 0.0039
+    },
+    {
+      "ngram": "怎么",
+      "oov": false,
+      "coef": -1.064,
+      "weight": 0.0038
+    },
+    {
+      "ngram": "中国",
+      "oov": false,
+      "coef": -1.109,
+      "weight": 0.0036
+    },
+    {
+      "ngram": "如何",
+      "oov": false,
+      "coef": -0.998,
+      "weight": 0.0035
+    },
+    {
+      "ngram": "地区",
+      "oov": false,
+      "coef": 1.453,
+      "weight": 0.0033
+    },
+    {
+      "ngram": "，不",
+      "oov": false,
+      "coef": 1.71,
+      "weight": 0.0032
+    },
+    {
+      "ngram": "内容",
+      "oov": false,
+      "coef": 2.169,
+      "weight": 0.0032
+    },
+    {
+      "ngram": "##",
+      "oov": true,
+      "coef": 1.949,
+      "weight": 0.0029
+    },
+    {
+      "ngram": "，无",
+      "oov": false,
+      "coef": 1.884,
+      "weight": 0.0028
+    },
+    {
+      "ngram": "安全",
+      "oov": false,
+      "coef": 1.546,
+      "weight": 0.0027
+    },
+    {
+      "ngram": "无需",
+      "oov": false,
+      "coef": 2.009,
+      "weight": 0.0026
+    },
+    {
+      "ngram": "数据",
+      "oov": false,
+      "coef": 1.36,
+      "weight": 0.0025
+    },
+    {
+      "ngram": "，这",
+      "oov": false,
+      "coef": 1.157,
+      "weight": 0.0023
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# 开发/测试依赖（CI 只装这一份，不装 torch）
+-r requirements.txt
+pytest>=8
+ruff>=0.5
+httpx>=0.27

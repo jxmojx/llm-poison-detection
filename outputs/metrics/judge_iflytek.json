@@ -1,0 +1,218 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "scoring": "logprob",
+  "gate": "knn",
+  "few_shot": true,
+  "n": 320,
+  "parse_fail": 0,
+  "detectors": {
+    "qwen_logprob": {
+      "threshold": 0.8380327820777893,
+      "tp": 73,
+      "fp": 1,
+      "tn": 119,
+      "fn": 127,
+      "precision": 0.9865,
+      "recall": 0.365,
+      "f1": 0.5328,
+      "fpr": 0.0083,
+      "accuracy": 0.6,
+      "auroc": 0.7208,
+      "auprc": 0.8432,
+      "tpr_at_fpr1": 0.365,
+      "tpr_at_fpr5": 0.415,
+      "n": 320,
+      "parse_fail": 0,
+      "scoring": "logprob",
+      "dev_achieved_fpr": 0.0125,
+      "sec_per_item": 1.1205,
+      "auroc_ci95": [
+        0.6662,
+        0.7781
+      ],
+      "ece": 0.1195,
+      "mean_score": 0.5675,
+      "tpr_at_fpr1_devcal": 0.365
+    }
+  },
+  "family_recall": {
+    "qwen_logprob": {
+      "template": {
+        "n": 40,
+        "recall": 0.925
+      },
+      "paraphrase": {
+        "n": 40,
+        "recall": 0.725
+      },
+      "subtle": {
+        "n": 40,
+        "recall": 0.15
+      },
+      "backdoor": {
+        "n": 40,
+        "recall": 0.0
+      },
+      "edit": {
+        "n": 40,
+        "recall": 0.025
+      }
+    }
+  },
+  "family_recall_at_0.5": {
+    "qwen_logprob": {
+      "template": {
+        "n": 40,
+        "recall": 1.0
+      },
+      "paraphrase": {
+        "n": 40,
+        "recall": 0.925
+      },
+      "subtle": {
+        "n": 40,
+        "recall": 0.825
+      },
+      "backdoor": {
+        "n": 40,
+        "recall": 0.15
+      },
+      "edit": {
+        "n": 40,
+        "recall": 0.375
+      }
+    }
+  },
+  "cascade": {
+    "curve": [
+      {
+        "budget": 0.05,
+        "call_ratio": 0.05,
+        "n_calls": 16,
+        "recall": 0.02,
+        "precision": 0.8,
+        "random_recall": 0.0312
+      },
+      {
+        "budget": 0.1,
+        "call_ratio": 0.1,
+        "n_calls": 32,
+        "recall": 0.04,
+        "precision": 0.7273,
+        "random_recall": 0.0625
+      },
+      {
+        "budget": 0.2,
+        "call_ratio": 0.2,
+        "n_calls": 64,
+        "recall": 0.13,
+        "precision": 0.8667,
+        "random_recall": 0.125
+      },
+      {
+        "budget": 0.4,
+        "call_ratio": 0.4,
+        "n_calls": 128,
+        "recall": 0.31,
+        "precision": 0.8158,
+        "random_recall": 0.25
+      },
+      {
+        "budget": 0.6,
+        "call_ratio": 0.6,
+        "n_calls": 192,
+        "recall": 0.455,
+        "precision": 0.7982,
+        "random_recall": 0.375
+      },
+      {
+        "budget": 1.0,
+        "call_ratio": 1.0,
+        "n_calls": 320,
+        "recall": 0.655,
+        "precision": 0.7486,
+        "random_recall": 0.625
+      }
+    ],
+    "by_gate": {
+      "knn": [
+        {
+          "budget": 0.05,
+          "call_ratio": 0.05,
+          "n_calls": 16,
+          "recall": 0.02,
+          "precision": 0.8,
+          "random_recall": 0.0312
+        },
+        {
+          "budget": 0.1,
+          "call_ratio": 0.1,
+          "n_calls": 32,
+          "recall": 0.04,
+          "precision": 0.7273,
+          "random_recall": 0.0625
+        },
+        {
+          "budget": 0.2,
+          "call_ratio": 0.2,
+          "n_calls": 64,
+          "recall": 0.13,
+          "precision": 0.8667,
+          "random_recall": 0.125
+        },
+        {
+          "budget": 0.4,
+          "call_ratio": 0.4,
+          "n_calls": 128,
+          "recall": 0.31,
+          "precision": 0.8158,
+          "random_recall": 0.25
+        },
+        {
+          "budget": 0.6,
+          "call_ratio": 0.6,
+          "n_calls": 192,
+          "recall": 0.455,
+          "precision": 0.7982,
+          "random_recall": 0.375
+        },
+        {
+          "budget": 1.0,
+          "call_ratio": 1.0,
+          "n_calls": 320,
+          "recall": 0.655,
+          "precision": 0.7486,
+          "random_recall": 0.625
+        }
+      ]
+    },
+    "n_total": 320,
+    "n_llm": 62,
+    "llm_ratio": 0.1938,
+    "n_eval": 320
+  },
+  "provenance": {
+    "at": "2026-11-06T20:19:02",
+    "git_sha": "c08b2f4",
+    "git_dirty": true,
+    "python": "3.13.9",
+    "platform": "Windows-11",
+    "seed": 42,
+    "target_fpr": 0.01,
+    "clean_source": "tnews",
+    "edit_family": true,
+    "n_hardneg": 400,
+    "encoder": "crom",
+    "qwen": "Qwen/Qwen2.5-1.5B-Instruct",
+    "qwen_scoring": "logprob",
+    "config_hash": "d6bee43160cf",
+    "pkgs": {
+      "numpy": "2.3.5",
+      "sklearn": "1.8.0",
+      "scipy": "1.16.3",
+      "torch": "2.9.1+cpu",
+      "transformers": "4.57.6"
+    }
+  },
+  "note": "若为 judge_heuristic 则说明本机无 Qwen 权重，仅用于跑通链路，不计入主结论"
+}

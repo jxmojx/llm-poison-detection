@@ -1,0 +1,129 @@
+{
+  "model": "D:\\Data\\PycharmFile\\netsafe\\baseline_model.pth",
+  "n_params": "102.3M",
+  "load_report": {
+    "num_labels": 2,
+    "n_missing": 0,
+    "n_unexpected": 0,
+    "missing_sample": [],
+    "unexpected_sample": []
+  },
+  "detectors": {
+    "victim_entropy": {
+      "threshold": 0.0008302992209792137,
+      "tp": 2000,
+      "fp": 7,
+      "tn": 744,
+      "fn": 0,
+      "precision": 0.9965,
+      "recall": 1.0,
+      "f1": 0.9983,
+      "fpr": 0.0093,
+      "accuracy": 0.9975,
+      "auroc": 1.0,
+      "auprc": 1.0,
+      "tpr_at_fpr1": 1.0,
+      "tpr_at_fpr5": 1.0,
+      "n": 2751,
+      "dev_achieved_fpr": 0.0093,
+      "fpr_ood": 1.0,
+      "auroc_allneg": 0.7136
+    },
+    "victim_p_poison": {
+      "threshold": 7.953902968438342e-05,
+      "tp": 2000,
+      "fp": 7,
+      "tn": 744,
+      "fn": 0,
+      "precision": 0.9965,
+      "recall": 1.0,
+      "f1": 0.9983,
+      "fpr": 0.0093,
+      "accuracy": 0.9975,
+      "auroc": 1.0,
+      "auprc": 1.0,
+      "tpr_at_fpr1": 1.0,
+      "tpr_at_fpr5": 1.0,
+      "n": 2751,
+      "dev_achieved_fpr": 0.0093,
+      "fpr_ood": 1.0,
+      "auroc_allneg": 0.9311
+    },
+    "victim_margin": {
+      "threshold": -9.439183235168457,
+      "tp": 2000,
+      "fp": 7,
+      "tn": 744,
+      "fn": 0,
+      "precision": 0.9965,
+      "recall": 1.0,
+      "f1": 0.9983,
+      "fpr": 0.0093,
+      "accuracy": 0.9975,
+      "auroc": 1.0,
+      "auprc": 1.0,
+      "tpr_at_fpr1": 1.0,
+      "tpr_at_fpr5": 1.0,
+      "n": 2751,
+      "dev_achieved_fpr": 0.0093,
+      "fpr_ood": 1.0,
+      "auroc_allneg": 0.9311
+    }
+  },
+  "family_recall": {
+    "victim_entropy": {
+      "template": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "subtle": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "backdoor": {
+        "n": 500,
+        "recall": 1.0
+      }
+    },
+    "victim_p_poison": {
+      "template": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "subtle": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "backdoor": {
+        "n": 500,
+        "recall": 1.0
+      }
+    },
+    "victim_margin": {
+      "template": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "subtle": {
+        "n": 500,
+        "recall": 1.0
+      },
+      "backdoor": {
+        "n": 500,
+        "recall": 1.0
+      }
+    }
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "python": "3.13.9",
+  "root": "D:\\Data\\PycharmFile\\netsafe",
+  "checks": [
+    {
+      "item": "numpy",
+      "status": "OK",
+      "detail": "2.3.5"
+    },
+    {
+      "item": "scipy",
+      "status": "OK",
+      "detail": "1.16.3"
+    },
+    {
+      "item": "sklearn",
+      "status": "OK",
+      "detail": "1.8.0"
+    },
+    {
+      "item": "pandas",
+      "status": "OK",
+      "detail": "2.3.3"
+    },
+    {
+      "item": "matplotlib",
+      "status": "OK",
+      "detail": "3.10.7"
+    },
+    {
+      "item": "torch",
+      "status": "OK",
+      "detail": "2.9.1+cpu"
+    },
+    {
+      "item": "transformers",
+      "status": "OK",
+      "detail": "4.57.6"
+    },
+    {
+      "item": "safetensors",
+      "status": "OK",
+      "detail": "0.8.0"
+    },
+    {
+      "item": "yaml",
+      "status": "OK",
+      "detail": "6.0.3"
+    },
+    {
+      "item": "fastapi",
+      "status": "OK",
+      "detail": "0.128.0"
+    },
+    {
+      "item": "uvicorn",
+      "status": "OK",
+      "detail": "0.54.0"
+    },
+    {
+      "item": "modelscope",
+      "status": "OK",
+      "detail": "1.33.0"
+    },
+    {
+      "item": "pytest",
+      "status": "OK",
+      "detail": "9.1.1"
+    },
+    {
+      "item": "encoder(crom)",
+      "status": "OK",
+      "detail": "D:\\Data\\PycharmFile\\netsafe\\model_cache\\damo\\nlp_corom_sentence-embedding_chinese-base"
+    },
+    {
+      "item": "processed",
+      "status": "OK",
+      "detail": "D:\\Data\\PycharmFile\\netsafe\\data\\processed"
+    },
+    {
+      "item": "raw/real_tnews",
+      "status": "OK",
+      "detail": "D:\\Data\\PycharmFile\\netsafe\\data\\raw\\real_tnews.txt"
+    },
+    {
+      "item": "metrics",
+      "status": "OK",
+      "detail": "D:\\Data\\PycharmFile\\netsafe\\outputs\\metrics"
+    },
+    {
+      "item": "qwen weights",
+      "status": "OK",
+      "detail": "Qwen2.5-0.5B-Instruct@D:\\Data\\PycharmFile\\netsafe\\model_cache\\Qwen\\Qwen2___5-0___5B-Instruct"
+    }
+  ],
+  "provenance": {
+    "at": "2026-10-26T19:02:26",
+    "git_sha": "c08b2f4",
+    "git_dirty": true,
+    "python": "3.13.9",
+    "platform": "Windows-11",
+    "seed": 42,
+    "target_fpr": 0.01,
+    "clean_source": "synthetic",
+    "edit_family": false,
+    "n_hardneg": 0,
+    "encoder": "crom",
+    "qwen": "Qwen/Qwen2.5-1.5B-Instruct",
+    "qwen_scoring": "logprob",
+    "config_hash": "a1c4e98fc548",
+    "pkgs": {
+      "numpy": "2.3.5",
+      "sklearn": "1.8.0",
+      "scipy": "1.16.3",
+      "torch": "2.9.1+cpu",
+      "transformers": "4.57.6"
+    }
+  }
+}

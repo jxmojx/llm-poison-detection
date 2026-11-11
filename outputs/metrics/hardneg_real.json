@@ -1,0 +1,49 @@
+{
+  "n_hard": 309,
+  "detectors": {
+    "sup_tfidf": {
+      "auroc_attack_vs_hardneg": 1.0,
+      "auroc_attack_vs_clean": 1.0,
+      "mean_score": {
+        "hard_neg": 0.0492,
+        "clean": 0.0394,
+        "attack": 0.8551
+      },
+      "tpr_at_hardneg_fpr5": 1.0
+    },
+    "knn": {
+      "auroc_attack_vs_hardneg": 0.5003,
+      "mean_score": {
+        "hard_neg": 0.0008,
+        "attack": 0.001
+      }
+    },
+    "mahalanobis": {
+      "auroc_attack_vs_hardneg": 0.5814,
+      "mean_score": {
+        "hard_neg": 7.5538,
+        "attack": 9.9393
+      }
+    }
+  },
+  "markers": [
+    "内部",
+    "据知情",
+    "透露",
+    "通报",
+    "统计",
+    "流出",
+    "截图",
+    "调查",
+    "未经",
+    "核实",
+    "官方",
+    "消息",
+    "传闻",
+    "爆料",
+    "网传",
+    "质疑",
+    "回应",
+    "曝光"
+  ]
+}
