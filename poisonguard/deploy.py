@@ -29,6 +29,8 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import hmac
+import os
 import json
 import pickle
 import time
@@ -246,10 +248,67 @@ def _quantize_knn(knn: KNNDetector | None, mode: str) -> Any:
     return PackedKNN.from_knn(knn, mode=mode)
 
 
+ENV_SIGN_KEY = "POISONGUARD_PKG_KEY"
+
+
+def _resolve_sign_key(key: str | None = None,
+                      key_file: str | Path | None = None) -> str | None:
+    """签名密钥优先级：显式 --sign-key > --sign-key-file > 环境变量。"""
+    if key:
+        return str(key)
+    if key_file:
+        return Path(key_file).read_text(encoding="utf-8").strip() or None
+    env = os.environ.get(ENV_SIGN_KEY, "").strip()
+    return env or None
+
+
+def _container_core(container: dict) -> bytes:
+    """被签名的规范化字节串（不含 sig 本身）：format|version|sha256|manifest。"""
+    manifest = json.dumps(container.get("manifest") or {}, sort_keys=True,
+                          ensure_ascii=False, separators=(",", ":"))
+    return (f"{container.get('format')}|{container.get('version')}|"
+            f"{container.get('sha256')}|{manifest}").encode("utf-8")
+
+
+def _sign_container(container: dict, key: str) -> str:
+    return hmac.new(key.encode("utf-8"), _container_core(container),
+                    hashlib.sha256).hexdigest()
+
+
+def _hash_file(path: Path, chunk: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def encoder_fingerprint(cfg: Config) -> str:
+    """编码器权重指纹：model_dir 下 *.safetensors/*.bin 的「路径+大小+sha256」聚合。
+
+    用途是防「同名不同权重」——部署机装了同款模型的另一个版本时，
+    kNN / 学生模型的特征空间就变了，分数不可比。16 位 hex（64 bit）
+    足够日常运维区分，不是密码学身份（那属于签名该做的事）。
+    """
+    root = Path(getattr(cfg.encoder, "model_dir", "") or "")
+    if not root.is_dir():
+        return ""
+    files = sorted(p for p in root.rglob("*")
+                   if p.is_file() and p.suffix in (".safetensors", ".bin"))
+    if not files:
+        return ""
+    h = hashlib.sha256()
+    for p in files:
+        h.update(f"{p.relative_to(root).as_posix()}|{p.stat().st_size}|".encode("utf-8"))
+        h.update(_hash_file(p).encode("ascii"))
+    return h.hexdigest()[:16]
+
+
 def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
                   student_path: str | Path | None = None,
                   threshold: float | None = None,
-                  quantize: str = "none") -> Path:
+                  quantize: str = "none",
+                  sign_key: str | None = None) -> Path:
     """作者侧：装配该域打分器 → 提取拟合态 → 落单文件 .pkg。"""
     scorer = build_scorer(cfg, student_path=_student_path_for(cfg, student_path))
     if threshold is not None:
@@ -281,6 +340,12 @@ def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
             if getattr(scorer.knn, "nn", None) is not None else 0,
         },
     )
+    fp = ""
+    try:
+        fp = encoder_fingerprint(cfg)
+    except OSError as exc:  # 权重文件被占用/不可读时不阻塞打包
+        print(f"[deploy] 警告: 编码器指纹计算失败({exc})，包内不带指纹")
+
     if out_path is None:
         out_path = Path("outputs") / "deploy" / f"poisonguard-{domain or 'default'}.pkg"
     out_path = Path(out_path)
@@ -303,9 +368,13 @@ def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
             "threshold": state.threshold,
             "judge_threshold": state.judge_threshold,
             "created": state.provenance.get("created"),
+            "encoder_fingerprint": fp,
+            "signed": bool(sign_key),
         },
         "payload": payload,
     }
+    if sign_key:
+        container["sig"] = _sign_container(container, sign_key)
     with open(out_path, "wb") as f:
         pickle.dump(container, f, protocol=pickle.HIGHEST_PROTOCOL)
     print(f"[deploy] {domain} 拟合态已打包 -> {out_path} "
@@ -313,10 +382,14 @@ def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
           f"量化: {container['manifest']['quantize']})")
     print(f"[deploy] sha256={digest[:16]}…  payload={len(payload) / 1024:.0f} KB  "
           f"knn_refs={container['manifest']['knn_refs']}")
+    print(f"[deploy] 签名: {'HMAC-SHA256 已签' if sign_key else '未签名(仅完整性校验)'}  "
+          f"编码器指纹: {fp or '(未计算)'}")
     return out_path
 
 
-def load_bundle(path: str | Path, cfg: Config | None = None) -> DeployedScorer:
+def load_bundle(path: str | Path, cfg: Config | None = None,
+                sign_key: str | None = None,
+                require_signature: bool = False) -> DeployedScorer:
     """部署侧：加载 .pkg 并重建编码器(必须是打包容器的同一编码器)。"""
     from .encoders import get_encoder
 
@@ -335,6 +408,18 @@ def load_bundle(path: str | Path, cfg: Config | None = None) -> DeployedScorer:
                 "（文件被截断或篡改，拒绝加载）")
         manifest = obj.get("manifest") or {}
         digest = got
+        sig = str(obj.get("sig") or "")
+        if sig:
+            if not sign_key:
+                raise ValueError(
+                    ".pkg 已用 HMAC 签名，但未提供校验密钥"
+                    "（--sign-key / --sign-key-file / 环境变量 POISONGUARD_PKG_KEY）")
+            if not hmac.compare_digest(sig, _sign_container(obj, sign_key)):
+                raise ValueError(
+                    ".pkg 签名校验失败（密钥不对，或包在签名后被改动/替换）")
+        elif require_signature:
+            raise ValueError(".pkg 未签名，但要求必须签名（--require-signature）；"
+                             "请让作者侧用 --sign-key 重新打包")
         state: DeployState = pickle.loads(payload)
     else:  # 兼容旧格式：裸 DeployState（无 sha256/manifest）
         state = obj
@@ -357,20 +442,35 @@ def load_bundle(path: str | Path, cfg: Config | None = None) -> DeployedScorer:
             "部署机缺少编码器权重(公共模型)。请用 `python -m poisonguard.cli "
             "download-encoder --encoder crom` 下载后重试。"
         )
+    want_fp = str(manifest.get("encoder_fingerprint") or "")
+    if want_fp:
+        try:
+            got_fp = encoder_fingerprint(base)
+        except OSError:
+            got_fp = ""
+        if got_fp and got_fp != want_fp:
+            raise ValueError(
+                f"编码器权重指纹不一致: 包内 {want_fp} vs 本地 {got_fp}"
+                "（同名的不同权重会让 kNN/学生全部失真，拒绝加载）")
     sc = DeployedScorer(state, enc)
     quant = manifest.get("quantize") or state.provenance.get("quantize", "none")
     print(f"[run] 发布物校验通过: domain={manifest.get('domain') or state.domain} "
           f"quantize={quant} "
-          f"sha256={(digest[:16] + '…') if digest else '(legacy, 无校验)'}")
+          f"sha256={(digest[:16] + '…') if digest else '(legacy, 无校验)'} "
+          f"签名={'已验' if manifest.get('signed') else '无'} "
+          f"指纹={(manifest.get('encoder_fingerprint') or '-')}")
     return sc
 
 
 # ----------------------------------------------------------------------
 def cmd_deploy(cfg: Config, args: argparse.Namespace) -> Path:
-    return bundle_scorer(cfg, out_path=getattr(args, "out", None),
-                         student_path=getattr(args, "student", None),
-                         threshold=getattr(args, "threshold", None),
-                         quantize=getattr(args, "quantize", "none") or "none")
+    return bundle_scorer(
+        cfg, out_path=getattr(args, "out", None),
+        student_path=getattr(args, "student", None),
+        threshold=getattr(args, "threshold", None),
+        quantize=getattr(args, "quantize", "none") or "none",
+        sign_key=_resolve_sign_key(getattr(args, "sign_key", None),
+                                   getattr(args, "sign_key_file", None)))
 
 
 def cmd_run(cfg: Config, args: argparse.Namespace) -> dict:
@@ -381,7 +481,11 @@ def cmd_run(cfg: Config, args: argparse.Namespace) -> dict:
         sys.exit(2)
     from .scan import scan_file
 
-    scorer = load_bundle(args.bundle, cfg)
+    scorer = load_bundle(
+        args.bundle, cfg,
+        sign_key=_resolve_sign_key(getattr(args, "sign_key", None),
+                                   getattr(args, "sign_key_file", None)),
+        require_signature=bool(getattr(args, "require_signature", False)))
     result = scan_file(cfg, args.input, threshold=None,
                        judge_topk=getattr(args, "judge_topk", 0),
                        fmt=getattr(args, "format", "auto"),
@@ -407,6 +511,8 @@ if __name__ == "__main__":
     p1.add_argument("--out", default=None)
     p1.add_argument("--quantize", default="none", choices=["none", "f16", "i8"],
                     help="kNN 参考向量量化(none/f16/i8)，用于压缩发布物体积")
+    p1.add_argument("--sign-key", default=None, help="HMAC 签名密钥(也可用环境变量)")
+    p1.add_argument("--sign-key-file", default=None, help="从文件读签名密钥")
     p2 = sub.add_parser("run", help="加载 .pkg 离线批扫")
     p2.add_argument("--config", default=None)
     p2.add_argument("--bundle", required=True)
@@ -417,6 +523,10 @@ if __name__ == "__main__":
     p2.add_argument("--judge-topk", type=int, default=0)
     p2.add_argument("--out-prefix", default=None)
     p2.add_argument("--no-html", action="store_true")
+    p2.add_argument("--sign-key", default=None, help="校验 HMAC 签名的密钥")
+    p2.add_argument("--sign-key-file", default=None, help="从文件读校验密钥")
+    p2.add_argument("--require-signature", action="store_true",
+                    help="包未签名则拒绝加载")
     a = ap.parse_args(sys.argv[1:])
     cfg = load_config(a.config)
     if getattr(a, "domain", ""):

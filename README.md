@@ -75,7 +75,7 @@ python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob -
 python -m poisonguard.cli report  $V3    # → docs/实验报告_real_v3.md
 python -m poisonguard.cli serve   $V3 --port 8000   # FastAPI: /health /score /stats
 python -m poisonguard.cli doctor                     # 环境自检（换机器先跑这个）
-python -m pytest tests/ -q                           # 37 项测试（data/detect/judge/distill/serve/scan/deploy/redteam-sanitize）
+python -m pytest tests/ -q                           # 42 项测试（data/detect/judge/distill/serve/scan/deploy/redteam-sanitize）
 ```
 
 `make` 里已经固化了这套：`make data|detect|judge|distill|redteam|report|serve|test|doctor`。
@@ -132,14 +132,18 @@ python -m poisonguard.cli scan --clean-source tnews --real-file real_afqmc.txt -
 python -m poisonguard.cli deploy --clean-source tnews --real-file real_afqmc.txt --edit --hardneg 400
 # 可选：kNN 参考向量量化，把 42 MB 压到 11 MB
 python -m poisonguard.cli deploy ... --quantize i8        # none / f16 / i8
+# 可选：给包签名（密钥也可走 --sign-key-file 或环境变量 POISONGUARD_PKG_KEY）
+python -m poisonguard.cli deploy ... --sign-key demo-key-2026
 # 部署侧：加载 .pkg 离线批扫（不需要 train/dev 原文本，不需要判官大模型）
 python -m poisonguard.cli run --bundle outputs/deploy/poisonguard-afqmc.pkg \\
-    --input data/scan_demo_afqmc.txt --judge-topk 2
+    --input data/scan_demo_afqmc.txt --judge-topk 2 \
+    --sign-key demo-key-2026 --require-signature
 ```
 
 - 包大小 afqmc：`none` **42 MB** / `f16` **20.9 MB** / `i8` **10.9 MB**（体积主要是 kNN 参考句向量：13807 条 × 768 维；学生模型仅 100~241 KB，n-gram 分类器几 MB）。
 - 量化是有据可查的取舍：520 条真实样本上 i8 的 kNN 距离最大偏差 **1.1e-3**、最终分数偏差 **0**（学生模型主导、6 位小数）、**分档 0 处改变**；f16 距离偏差 1.3e-5。默认 `none`（精确），要小包就 `--quantize i8`。
 - 完整性：`.pkg` 是「payload + sha256 + manifest」容器，`run` 加载时校验 sha256，截断/篡改直接被 `ValueError` 拒绝（旧格式裸 pickle 仍可读但会提示重新打包）。
+- **真实性（sha256 防不了"换个合法包"）**：`--sign-key` 用 HMAC-SHA256 签 `format|version|sha256|manifest`，`run` 侧密钥不对/包被改动都拒绝；`--require-signature` 可强制"无签名不加载"；manifest 里还带 **编码器权重指纹**（模型文件逐字节 sha256 聚合），同名不同权重会直接报错——否则 kNN/学生全部建立在错误特征空间上还"看起来能跑"。
 - **校验口径**：`.pkg` 与作者侧装配逐条分数差 **0**、分档 0 处不一致。
 - 一致性保证：包内记录 `encoder.name` / `max_length`，加载时校验编码器一致（换编码器=换特征空间，kNN/学生失效，直接报错）；版本号不匹配抛 `ValueError`。
 - 报告口径：`domain`/`encoder` 取自包内，不依赖部署机的 `processed_<域>` 目录；判官阈值同样取自包内域值。
@@ -368,7 +372,7 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 - `outputs/metrics/*.json` 里记录 `encoder / target_fpr / n_train / n_dev / n_test / timestamp`，报告由脚本生成而非手抄
 - v3 起每条指标另带 `provenance`：`git_sha / git_dirty / python / platform / seed / clean_source / edit_family / n_hardneg / qwen / config_hash / 依赖版本`
 - 严格口径开关：`--style-holdout`（dev/test 用互不相交的模板骨架）、`--clean-source tnews`（干净侧换真实新闻）、`--run-tag v3`（产物加后缀，与旧口径并存）
-- 37 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词**
+- 42 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词**
 - 两列 TPR@1% 都报：`tpr_at_fpr1`（在 test 上找阈值，乐观上界）与 `tpr_at_fpr1_devcal`（阈值只由 dev 定，报告用这一列）。v3 实测 sup_tfidf 两列相等（0.808）、sup_lr 从 0.371 升到 0.469 —— 阈值调优不是虚高的主要来源。
 - `doctor` 子命令做环境自检（13 个依赖 + 编码器/数据/权重路径），换机器第一件事就跑它
 - **场景四完整复现（学生排序 TopK → LLM 判官精判）**：本机已有产物的快速路径（约 10 秒）、干净机器全量 6 步、预期输出与产物位置见 [`docs/复现步骤.md`](docs/复现步骤.md)，复现脚本为 [`examples/repro_scene4.py`](examples/repro_scene4.py)

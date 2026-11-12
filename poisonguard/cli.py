@@ -872,6 +872,9 @@ ARG_DEFAULTS = {
     "out": None,
     "bundle": None,
     "quantize": "none",
+    "sign_key": None,
+    "sign_key_file": None,
+    "require_signature": False,
 }
 
 
@@ -969,6 +972,10 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--quantize", default="none",
                            choices=["none", "f16", "i8"],
                            help="kNN 参考向量量化（none/f16/i8），压缩发布物体积")
+            p.add_argument("--sign-key", default=None,
+                           help="HMAC 签名密钥（也可用环境变量 POISONGUARD_PKG_KEY）")
+            p.add_argument("--sign-key-file", default=None,
+                           help="从文件读签名密钥（避免密钥进 shell 历史）")
         if name == "run":
             p.add_argument("--bundle", required=True,
                            help=".pkg 文件路径（deploy 产物）")
@@ -987,6 +994,12 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--no-html", action="store_true", help="不生成 HTML 报告")
             p.add_argument("--domain", default="",
                            help="processed 目录后缀(如 afqmc/iflytek)；空=默认 v3")
+            p.add_argument("--sign-key", default=None,
+                           help="校验 HMAC 签名的密钥（也可用环境变量 POISONGUARD_PKG_KEY）")
+            p.add_argument("--sign-key-file", default=None,
+                           help="从文件读校验密钥")
+            p.add_argument("--require-signature", action="store_true",
+                           help="包未签名则拒绝加载")
         if name == "hardneg":
             p.add_argument("--n-hard", type=int, default=400, help="硬负样本条数")
         if name == "all":

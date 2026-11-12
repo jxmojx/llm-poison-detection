@@ -219,3 +219,99 @@ def test_pkg_container_roundtrip_verifies(tmp_path, monkeypatch):
     sc = load_bundle(p)
     assert sc.domain == "afqmc"
     assert sc.state.provenance  # 拟合态 provenance 随包
+
+
+# ----------------------------------------------------------------------
+# 发布物真实性：HMAC 签名 + 编码器权重指纹
+# ----------------------------------------------------------------------
+def _write_container2(path: Path, state: DeployState, *, key: str | None = None,
+                      manifest: dict | None = None):
+    """造容器（可选签名）：sig 覆盖 format|version|sha256|manifest。"""
+    import hashlib
+
+    from poisonguard.deploy import _sign_container
+
+    payload = pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
+    container = {
+        "format": "poisonguard.pkg",
+        "version": PKG_VERSION,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+        "manifest": manifest if manifest is not None else {"domain": "afqmc"},
+        "payload": payload,
+    }
+    if key:
+        container["sig"] = _sign_container(container, key)
+    path.write_bytes(pickle.dumps(container))
+    return path
+
+
+@pytest.fixture()
+def fake_encode(monkeypatch):
+    """不打真模型：编码器换成假实现，指纹计算短路为不参与校验。"""
+    monkeypatch.setattr("poisonguard.encoders.get_encoder", lambda cfg: _FakeEnc())
+    monkeypatch.setattr("poisonguard.deploy.encoder_fingerprint", lambda cfg: "")
+    return True
+
+
+def test_pkg_hmac_signature_roundtrip(tmp_path: Path, fake_encode):
+    """密钥对 → 通过；密钥错 → 签名失败；没给密钥 → 拒绝（不能静默跳过校验）。"""
+    p = _write_container2(tmp_path / "signed.pkg", _state(), key="k-secret")
+    sc = load_bundle(p, sign_key="k-secret")
+    assert sc.domain == "afqmc"
+    with pytest.raises(ValueError, match="签名校验失败"):
+        load_bundle(p, sign_key="wrong-key")
+    with pytest.raises(ValueError, match="未提供校验密钥"):
+        load_bundle(p)
+
+
+def test_pkg_signed_container_binds_manifest_and_payload(tmp_path: Path, fake_encode):
+    """改 manifest（如把阈值调低）或换 payload，签名都必须失效。"""
+    p = _write_container2(tmp_path / "s.pkg", _state(), key="k",
+                          manifest={"domain": "afqmc", "threshold": 0.9})
+    pkg = pickle.loads(p.read_bytes())
+    pkg["manifest"]["threshold"] = 0.1        # 只改 manifest
+    p.write_bytes(pickle.dumps(pkg))
+    with pytest.raises(ValueError, match="签名校验失败"):
+        load_bundle(p, sign_key="k")
+
+
+def test_pkg_require_signature_rejects_unsigned(tmp_path: Path, fake_encode):
+    p = _write_container2(tmp_path / "plain.pkg", _state(), key=None)
+    load_bundle(p)                                    # 默认允许未签名
+    with pytest.raises(ValueError, match="未签名"):
+        load_bundle(p, require_signature=True)
+
+
+def test_load_bundle_rejects_encoder_fingerprint_mismatch(tmp_path, monkeypatch):
+    """同名不同权重（指纹不一致）必须拒绝：否则 kNN/学生特征空间是错的。"""
+    monkeypatch.setattr("poisonguard.encoders.get_encoder", lambda cfg: _FakeEnc())
+    monkeypatch.setattr("poisonguard.deploy.encoder_fingerprint", lambda cfg: "cafebabe0123")
+    p = _write_container2(tmp_path / "fp.pkg", _state(),
+                          manifest={"domain": "afqmc",
+                                    "encoder_fingerprint": "deadbeef9999"})
+    with pytest.raises(ValueError, match="指纹不一致"):
+        load_bundle(p)
+
+
+def test_encoder_fingerprint_tracks_weight_bytes(tmp_path: Path):
+    """指纹 = 文件名+大小+内容；权重变一个字节就要变，路径/内容相同则稳定。"""
+    from types import SimpleNamespace
+
+    from poisonguard.deploy import encoder_fingerprint
+
+    d = tmp_path / "model"
+    d.mkdir()
+    (d / "model.safetensors").write_bytes(b"x" * 2048)
+    (d / "config.json").write_bytes(b"{}")           # 非权重文件不参与
+    cfg = SimpleNamespace(encoder=SimpleNamespace(model_dir=str(d)))
+
+    fp1 = encoder_fingerprint(cfg)
+    fp2 = encoder_fingerprint(cfg)
+    assert fp1 and fp1 == fp2 and len(fp1) == 16
+
+    (d / "model.safetensors").write_bytes(b"x" * 2047 + b"y")   # 同大小、改内容
+    assert encoder_fingerprint(cfg) != fp1
+
+    (d / "model.safetensors").write_bytes(b"x" * 2048)          # 还原
+    assert encoder_fingerprint(cfg) == fp1
