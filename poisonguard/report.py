@@ -286,7 +286,8 @@ def v3_section(judge: dict | None, distill: dict | None,
               f"{redteam.get('base_mean_sanitized')}（加固有“伤检出”的代价，脱敏不额外伤）。"
               "残余劫持集中在 `role_switch` / `fake_json` / `few_shot_mimic`："
               "它们靠**语境与角色叙述**而非显式指令词，字面脱敏抓不到。"
-              "终局仍是结构隔离——分类头 / 指令微调 / 多判官投票。")
+              "我们的终局选择是**结构隔离**（不解析指令的判官，`struct-train`），"
+              "见下方 A1 章节的实测。")
         else:
             A("> 劫持率 = 原文被判为污染(≥0.5) 而追加载荷后 <0.5 的比例。"
               "**结论：0.5B 判官对提示注入几乎无抵抗**，"
@@ -311,6 +312,7 @@ def build_report(
     out_path: str | Path,
     distill: dict | None = None,
     redteam: dict | None = None,
+    struct: dict | None = None,
 ) -> Path:
     lines: list[str] = []
     A = lines.append
@@ -549,6 +551,46 @@ def build_report(
     v3 = v3_section(judge, distill, redteam)
     if v3:
         A(v3)
+        A("")
+
+    if struct:
+        dets = struct.get("detectors") or {}
+        sm = (dets.get("struct_qwen") or {})
+        A("**结构隔离判官：冻结 Qwen 主干 + 二分类头（`struct-train`，A1）**")
+        A("")
+        A("结构隔离 = 判官不解析指令：文本只作为 token 被 Qwen 编码成隐藏表征，"
+          "再在表征上接线性头打分——不存在会被执行的指令通道。"
+          "这是红队结论（prompt 加固只能把劫持率从 100% 压到 19%）的终局回答。")
+        A("")
+        if "auroc" in sm:
+            fr = sm.get("family_recall") or {}
+            fams = "，".join(
+                f"{k} {v['recall']:.1%}" for k, v in sorted(fr.items())
+                if k != "all" and isinstance(v, dict) and "recall" in v)
+            A(f"- 冻结主干：`{struct.get('model')}`")
+            A(f"- 主指标：AUROC **{sm.get('auroc', 0):.3f}**、"
+              f"TPR@1%(dev校准) **{sm.get('tpr_at_fpr1_devcal', 0):.3f}**、"
+              f"n={sm.get('n')}（test 全量，与 `qwen_logprob` 同切片可直接对比）")
+            A(f"- 分类头参数：{struct.get('head_params')}；"
+              f"分家族召回：{fams}")
+            A("")
+        inj = sm.get("redteam") or {}
+        bp = inj.get("by_payload") or {}
+        if bp:
+            rows = []
+            for k, v in bp.items():
+                rows.append([f"`{k}`",
+                             f"{v.get('mean_delta', 0):+.3f}",
+                             f"{v.get('hijack_rate', 0):.0%}"])
+            A("**同一注入语料上结构隔离的表现（配对 Δ 分 / 劫持率）：**")
+            A("")
+            A(md_table(["载荷", "Δ分(结构)", "劫持率(结构)"], rows))
+            ai = inj.get("all") or {}
+            A("")
+            A("> **结构隔离把注入造成的 Δ 分压到接近 0、且没有“伤检出”的代价**"
+              f"（全部注入 Δ={ai.get('mean_delta', 0):+.3f}，"
+              f"劫持率 {ai.get('hijack_rate', 0):.0%}）。")
+            A("")
         A("")
 
     # ---------------- 6. 图 ----------------

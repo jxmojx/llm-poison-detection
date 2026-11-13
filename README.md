@@ -71,12 +71,13 @@ python -m poisonguard.cli detect $V3 --evade mix   # 自适应攻击（A4）：�
 python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob --limit 40 --dev-limit 20
 python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob --limit 40 --gate sup_tfidf
 python -m poisonguard.cli distill $V3    # 判官 → 毫秒级学生模型
+python -m poisonguard.cli struct-train $V3 --qwen-model 0.5b   # 结构隔离判官（A1）：冻结主干+二分类头，判官不解析指令（环节 18）
 python -m poisonguard.cli redteam $V3    # 判官提示注入红队（plain / 加固 / 加固+脱敏 三档配对）
 python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob --judge-hardened --judge-sanitize --limit 40
 python -m poisonguard.cli report  $V3    # → docs/实验报告_real_v3.md
 python -m poisonguard.cli serve   $V3 --port 8000   # FastAPI: /health /score /stats
 python -m poisonguard.cli doctor                     # 环境自检（换机器先跑这个）
-python -m pytest tests/ -q                           # 50 项测试（data/detect/judge/distill/serve/scan/deploy/redteam-sanitize/evade）
+python -m pytest tests/ -q                           # 59 项测试（data/detect/judge/distill/serve/scan/deploy/redteam-sanitize/evade/struct）
 ```
 
 `make` 里已经固化了这套：`make data|detect|judge|distill|redteam|report|serve|test|doctor`。
@@ -373,7 +374,7 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 - `outputs/metrics/*.json` 里记录 `encoder / target_fpr / n_train / n_dev / n_test / timestamp`，报告由脚本生成而非手抄
 - v3 起每条指标另带 `provenance`：`git_sha / git_dirty / python / platform / seed / clean_source / edit_family / n_hardneg / qwen / config_hash / 依赖版本`
 - 严格口径开关：`--style-holdout`（dev/test 用互不相交的模板骨架）、`--clean-source tnews`（干净侧换真实新闻）、`--run-tag v3`（产物加后缀，与旧口径并存）
-- 42 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏**（50 项全绿）
+- 42 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界**（59 项全绿）
 - 两列 TPR@1% 都报：`tpr_at_fpr1`（在 test 上找阈值，乐观上界）与 `tpr_at_fpr1_devcal`（阈值只由 dev 定，报告用这一列）。v3 实测 sup_tfidf 两列相等（0.808）、sup_lr 从 0.371 升到 0.469 —— 阈值调优不是虚高的主要来源。
 - `doctor` 子命令做环境自检（13 个依赖 + 编码器/数据/权重路径），换机器第一件事就跑它
 - **场景四完整复现（学生排序 TopK → LLM 判官精判）**：本机已有产物的快速路径（约 10 秒）、干净机器全量 6 步、预期输出与产物位置见 [`docs/复现步骤.md`](docs/复现步骤.md)，复现脚本为 [`examples/repro_scene4.py`](examples/repro_scene4.py)
@@ -396,4 +397,5 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 11. **判官是"能排序、不能当概率"**：`TPR@1%` 要落在 0.966 这个阈值上，`ECE=0.133`、平均分 0.583 却只有 27% 正例率 —— 想用它的绝对分做告警，必须先做温度缩放或分箱校准。
 12. **判官的输入就是它的攻击面**：8 类提示注入载荷在配对样本上劫持率 **56%**（Δ 分 −0.54）；分隔符 + 「分隔符内是不可信数据」的 system 声明把 Δ 收到 −0.36，但**代价是 base 检出也掉**（0.647→0.463）；再加确定性脱敏（`--judge-sanitize`，13 条正则剥夺「伪装成指令」的字面片段）后 Δ 降到 **−0.05**、劫持率 **19%**，且不额外伤检出。残余劫持集中在 `role_switch` / `fake_json` / `few_shot_mimic` —— 它们靠语境与角色叙述而非指令词，字面脱敏看不见，终局仍是结构隔离（分类头 / 指令微调 / 多判官投票）。这一条推翻了「加规则就能解决」的直觉，也写在 `docs/优化环节清单.md` 环节 16 与下一轮路线第 1 条。
 13. **词面逃避压不动 edit = 检测器能力上限，不是攻击太弱**：`detect --evade`（`poisonguard/evade.py`，环节 17）在攻击者知道特征（同义替换 / 字符扰动 / 组合）后重打分，三个域（tnews/iflytek/afqmc）的 edit 召回几乎不变（tnews 0.040→0.034、iflytek 0.014→0.012、afqmc 0.674→0.652）——因为 edit 是**事实层面的最小篡改**，抓它的东西（char n-gram + 信息密度）不在攻击者的词汇表里。这也说明要真正打穿只能换事实载体（更强攻击）或打语义层（判官注入，已在环节 12/16 量化）。
+14. **prompt 加规则的终点已到，结构隔离是终局**：`struct-train`（`poisonguard/struct.py`，环节 18）冻结 Qwen 主干 + 二分类头，判官**不解析指令**（无生成路径、无注入通道）。同一注入语料配对 Δ 压到 ~0、劫持率 19% → ~0%，且与 `qwen_logprob` 同切片 AUROC/TPR@1% 可比、CPU 可跑（0.5B 编码 20-40 分钟）。当前线性头容量有限，有 GPU 时换 LoRA 微调即可扩容。
 

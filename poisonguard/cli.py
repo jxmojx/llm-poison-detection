@@ -776,6 +776,7 @@ def cmd_report(cfg: Config, args) -> Path:
         out_path=_p(cfg, "docs", f"实验报告{RUN_SUFFIX}.md"),
         distill=_read("distill.json"),
         redteam=_read("redteam.json"),
+        struct=_read("struct.json"),
     )
 
 
@@ -938,6 +939,8 @@ ARG_DEFAULTS = {
     "sign_key": None,
     "sign_key_file": None,
     "require_signature": False,
+    "struct_c": 1.0,
+    "struct_seed": 42,
 }
 
 
@@ -954,6 +957,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("audit", "词面审计(检测器在抓有害性还是'没见过这种句式')"),
         ("hardneg", "硬负样本压力测试(攻击 vs 同样像传闻的无害新闻)"),
         ("distill", "判官蒸馏为毫秒级学生模型(降本环节)"),
+        ("struct-train", "结构隔离判官：冻结 Qwen 主干 + 二分类头(A1)"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
@@ -1003,6 +1007,13 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--dev-file", default=None, help="训练侧软标签 jsonl")
             p.add_argument("--test-file", default=None, help="测试侧软标签 jsonl")
             p.add_argument("--distill-c", type=float, default=1.0, help="逻辑回归正则强度倒数")
+        if name == "struct-train":
+            p.add_argument("--C", dest="struct_c", type=float, default=1.0,
+                           help="逻辑回归头的正则强度倒数(默认 1.0)")
+            p.add_argument("--seed", dest="struct_seed", type=int, default=42,
+                           help="头训练随机种子(默认 42)")
+            p.add_argument("--qwen-model", default=None,
+                           help="覆盖冻结主干: 0.5b / 1.5b / 完整 model id")
         if name == "redteam":
             p.add_argument("--rt-each", type=int, default=5,
                            help="每种注入载荷造几条文本")
@@ -1199,6 +1210,13 @@ def main(argv: list[str] | None = None) -> int:
                     n_each=int(getattr(args, "rt_each", 5) or 5))
     elif args.cmd == "distill":
         cmd_distill(cfg, args)
+    elif args.cmd == "struct-train":
+        from .struct import run_struct
+
+        run_struct(cfg,
+                   out_path=_metrics_path(cfg, "struct.json"),
+                   C=float(getattr(args, "struct_c", 1.0) or 1.0),
+                   seed=int(getattr(args, "struct_seed", 42) or 42))
     elif args.cmd == "serve":
         cmd_serve(cfg, args)
     elif args.cmd == "scan":
