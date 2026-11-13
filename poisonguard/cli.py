@@ -173,7 +173,8 @@ def cmd_data(cfg: Config, args) -> dict[str, list[D.Sample]]:
 
 
 # ----------------------------------------------------------------------
-def _fit_and_eval(cfg, Xtr, texts_tr, dev, Xdev, test, Xte, det_names=None):
+def _fit_and_eval(cfg, Xtr, texts_tr, dev, Xdev, test, Xte, det_names=None,
+                  eval_text=None, eval_X=None):
     """在训练集干净数据上拟合，在 dev 上校准阈值，在 test 上评估。
 
     两个容易搞错、但直接决定结论可信度的细节：
@@ -198,6 +199,7 @@ def _fit_and_eval(cfg, Xtr, texts_tr, dev, Xdev, test, Xte, det_names=None):
 
     dev_scores: dict[str, np.ndarray] = {}
     te_scores: dict[str, np.ndarray] = {}
+    evaded_scores: dict[str, np.ndarray] = {}
     cals: dict[str, Calibration] = {}
     metrics: dict[str, dict] = {}
     t0 = time.time()
@@ -216,6 +218,8 @@ def _fit_and_eval(cfg, Xtr, texts_tr, dev, Xdev, test, Xte, det_names=None):
             det.fit(Xtr, texts_tr)
             sd = det.score(Xdev, _texts(dev))
             st = det.score(Xte, _texts(test))
+        if eval_text is not None and eval_X is not None:
+            evaded_scores[name] = det.score(eval_X, eval_text)
         cal = Calibration.fit(sd[dev_cal_mask], cfg.detector.target_fpr)
         dev_scores[name] = sd
         te_scores[name] = st
@@ -270,7 +274,7 @@ def _fit_and_eval(cfg, Xtr, texts_tr, dev, Xdev, test, Xte, det_names=None):
     else:
         weights = None
 
-    return dev_scores, te_scores, cals, metrics, weights
+    return dev_scores, te_scores, evaded_scores, cals, metrics, weights
 
 
 def cmd_detect(cfg: Config, args) -> dict:
@@ -286,9 +290,51 @@ def cmd_detect(cfg: Config, args) -> dict:
     print(f"[detect] 编码完成 {Xtr.shape} / {Xdev.shape} / {Xte.shape} "
           f"({time.time() - t0:.1f}s)")
 
-    dev_scores, te_scores, cals, metrics, weights = _fit_and_eval(
-        cfg, Xtr, _texts(tr), dev, Xdev, test, Xte
-    )
+    evade = (getattr(args, "evade", None) or "none")
+    evade_meta = None
+    evaded_scores: dict[str, np.ndarray] = {}
+    if evade != "none":
+        from .evade import evade_text
+        # 只改写 test 的 edit 族正样本；其余样本原样打分（保持与基线同分布）
+        edit_mask = np.array([s.family == "edit" and s.label == 1 for s in test])
+        evaded = [evade_text(s.text, evade, seed=42 + i) if edit_mask[i] else s.text
+                  for i, s in enumerate(test)]
+        n_ed = int(edit_mask.sum())
+        # 只对真正改写的 edit 样本重新编码；其余复用基线向量（省 90% 编码时间）
+        edit_idx = np.where(edit_mask)[0]
+        if n_ed:
+            new_embs = enc.encode([evaded[int(i)] for i in edit_idx])
+            Xev = Xte.copy()
+            Xev[edit_idx] = new_embs
+        else:
+            Xev = Xte
+        print(f"[detect] 自适应攻击: method={evade} edit样本改写了 {n_ed} 条 -> 重打分")
+        dev_scores, te_scores, evaded_scores, cals, metrics, weights = _fit_and_eval(
+            cfg, Xtr, _texts(tr), dev, Xdev, test, Xte,
+            eval_text=evaded, eval_X=Xev,
+        )
+        # 配对对比 edit 族 no-evade vs evaded 的分数（代表性检测器）
+        if n_ed:
+            rep = "sup_tfidf" if "sup_tfidf" in te_scores else next(iter(te_scores))
+            base_s = te_scores[rep]
+            ev_s = evaded_scores.get(rep)
+            if ev_s is not None and len(ev_s) == len(test):
+                d = base_s[edit_mask] - ev_s[edit_mask]
+                pred = cals[rep].predict(ev_s)
+                edit_recall_evaded = float(pred[edit_mask].mean())
+                evade_meta = {
+                    "method": evade,
+                    "n_edit_rewritten": int(n_ed),
+                    "detector": rep,
+                    "edit_recall_base": round(float(cals[rep].predict(base_s)[edit_mask].mean()), 4),
+                    "edit_recall_evaded": round(edit_recall_evaded, 4),
+                    "mean_score_delta": round(float(d.mean()), 4),
+                    "pct_scores_dropped": round(float((d > 0).mean()), 4),
+                }
+    else:
+        dev_scores, te_scores, _evaded_scores, cals, metrics, weights = _fit_and_eval(
+            cfg, Xtr, _texts(tr), dev, Xdev, test, Xte,
+        )
 
     te_lab = _labels(test)
     families = [s.family for s in test]
@@ -332,8 +378,12 @@ def cmd_detect(cfg: Config, args) -> dict:
         "fpr_group": fpr_group,
         "fusion_weights": weights,
         "mcnemar": mcnemar,
+        "evade": evade_meta,
     }
     E.save_json(results, _metrics_path(cfg, "detect.json"))
+    if evade_meta is not None:
+        # 每方法单独存档，避免 9 次全跑互相覆盖 detect.json
+        E.save_json(results, _metrics_path(cfg, f"detect_evade_{evade}.json"))
 
     # 存原始分数，便于后面单独重画图/做误差分析
     np.savez_compressed(
@@ -341,6 +391,18 @@ def cmd_detect(cfg: Config, args) -> dict:
         y=te_lab, families=np.array(families),
         **{n: s.astype(np.float32) for n, s in te_scores.items()},
     )
+    if evaded_scores:
+        np.savez_compressed(
+            _metrics_path(cfg, "test_scores_evaded.npz"),
+            y=te_lab, families=np.array(families),
+            **{n: s.astype(np.float32) for n, s in evaded_scores.items()},
+        )
+    if evade_meta is not None and evaded_scores:
+        np.savez_compressed(
+            _metrics_path(cfg, f"test_scores_evaded_{evade}.npz"),
+            y=te_lab, families=np.array(families),
+            **{n: s.astype(np.float32) for n, s in evaded_scores.items()},
+        )
     np.savez_compressed(
         _metrics_path(cfg, "dev_scores.npz"),
         y=_labels(dev),
@@ -872,6 +934,7 @@ ARG_DEFAULTS = {
     "out": None,
     "bundle": None,
     "quantize": "none",
+    "evade": "none",
     "sign_key": None,
     "sign_key_file": None,
     "require_signature": False,
@@ -905,6 +968,10 @@ def build_parser() -> argparse.ArgumentParser:
         _add_common(p, with_encoder=(name != "download"))
         if name == "detect":
             p.add_argument("--boot", type=int, default=1000, help="Bootstrap 次数")
+            p.add_argument("--evade", default="none",
+                           choices=["none", "syn", "chr", "mix"],
+                           help="自适应攻击：对 test 的 edit 正样本做逃避变换后重打分 "
+                                "(syn=同义替换 chr=字符扰动 mix=组合；none=关闭)")
         if name == "judge":
             p.add_argument("--judge", default="auto", choices=["auto", "qwen", "heuristic"])
             p.add_argument("--limit", type=int, default=40, help="每类最多判定多少条")
