@@ -13,10 +13,10 @@
       "backdoor",
       "edit"
     ],
-    "timestamp": "2026-11-07 16:09:29",
+    "timestamp": "2026-11-13 19:57:08",
     "provenance": {
-      "at": "2026-11-07T16:09:29",
-      "git_sha": "c08b2f4",
+      "at": "2026-11-13T19:57:08",
+      "git_sha": "0e75a8e",
       "git_dirty": true,
       "python": "3.13.9",
       "platform": "Windows-11",
@@ -28,12 +28,12 @@
       "encoder": "crom",
       "qwen": "Qwen/Qwen2.5-1.5B-Instruct",
       "qwen_scoring": "logprob",
-      "config_hash": "8f8809b552e5",
+      "config_hash": "1abe482928fc",
       "pkgs": {
         "numpy": "2.3.5",
         "sklearn": "1.8.0",
         "scipy": "1.16.3",
-        "torch": "2.9.1+cpu",
+        "torch": "2.15.0+cpu",
         "transformers": "4.57.6"
       }
     }
@@ -608,5 +608,14 @@
       "only_b": 0,
       "test": "none"
     }
+  },
+  "evade": {
+    "method": "chr",
+    "n_edit_rewritten": 500,
+    "detector": "sup_tfidf",
+    "edit_recall_base": 0.674,
+    "edit_recall_evaded": 0.646,
+    "mean_score_delta": 0.0118,
+    "pct_scores_dropped": 0.284
   }
 }
