@@ -1,0 +1,318 @@
+{
+  "meta": {
+    "method": "split_conformal_prediction",
+    "alpha": 0.01,
+    "n_cal_clean": 2996,
+    "n_test_clean": 2997,
+    "n_test_pos": 2500,
+    "assumption": "校准集与测试干净侧同分布（同一 real 语料、不同随机种子）",
+    "lemma": "交换性引理（Lei et al. 2018 Lemma 2）：P(下一个干净样本被误报) ≤ (n+1−⌈(1−α)(n+1)⌉)/(n+1) — 无渐近假设，小校准集也严格成立"
+  },
+  "by_detector": {
+    "keyword": {
+      "empirical_threshold": 0.0,
+      "empirical_dev_fpr": 0.002336,
+      "conformal_threshold": 0.0,
+      "fpr_bound_conformal": 0.009676,
+      "alpha": 0.01,
+      "n_cal": 2996,
+      "k_ceil": 2968,
+      "test_n": 2997,
+      "test_fpr_achieved": 0.003003,
+      "test_fpr_upper_hoeffding": 0.027811,
+      "bound_kind": "split_conformal_exchangeability",
+      "note": "阈值=第⌈(1−α)(n+1)⌉=2968小的校准分；可证 P(下一个干净样本误报) ≤ 0.0097（交换性，不依赖 test）；test 仅验证(m=2997)，实测误报 0.0030。",
+      "test_tpr_at_conformal": 0.1644,
+      "family_recall": {
+        "template": {
+          "n": 500,
+          "recall": 0.806
+        },
+        "paraphrase": {
+          "n": 500,
+          "recall": 0.0
+        },
+        "subtle": {
+          "n": 500,
+          "recall": 0.0
+        },
+        "backdoor": {
+          "n": 500,
+          "recall": 0.004
+        },
+        "edit": {
+          "n": 500,
+          "recall": 0.012
+        }
+      },
+      "n_pos": 2500
+    },
+    "centroid": {
+      "empirical_threshold": 0.025684,
+      "empirical_dev_fpr": 0.010013,
+      "conformal_threshold": 0.025936,
+      "fpr_bound_conformal": 0.009676,
+      "alpha": 0.01,
+      "n_cal": 2996,
+      "k_ceil": 2968,
+      "test_n": 2997,
+      "test_fpr_achieved": 0.012346,
+      "test_fpr_upper_hoeffding": 0.037154,
+      "bound_kind": "split_conformal_exchangeability",
+      "note": "阈值=第⌈(1−α)(n+1)⌉=2968小的校准分；可证 P(下一个干净样本误报) ≤ 0.0097（交换性，不依赖 test）；test 仅验证(m=2997)，实测误报 0.0123。",
+      "test_tpr_at_conformal": 0.0152,
+      "family_recall": {
+        "template": {
+          "n": 500,
+          "recall": 0.004
+        },
+        "paraphrase": {
+          "n": 500,
+          "recall": 0.02
+        },
+        "subtle": {
+          "n": 500,
+          "recall": 0.028
+        },
+        "backdoor": {
+          "n": 500,
+          "recall": 0.008
+        },
+        "edit": {
+          "n": 500,
+          "recall": 0.016
+        }
+      },
+      "n_pos": 2500
+    },
+    "knn": {
+      "empirical_threshold": 0.003651,
+      "empirical_dev_fpr": 0.010013,
+      "conformal_threshold": 0.003696,
+      "fpr_bound_conformal": 0.009676,
+      "alpha": 0.01,
+      "n_cal": 2996,
+      "k_ceil": 2968,
+      "test_n": 2997,
+      "test_fpr_achieved": 0.013013,
+      "test_fpr_upper_hoeffding": 0.037821,
+      "bound_kind": "split_conformal_exchangeability",
+      "note": "阈值=第⌈(1−α)(n+1)⌉=2968小的校准分；可证 P(下一个干净样本误报) ≤ 0.0097（交换性，不依赖 test）；test 仅验证(m=2997)，实测误报 0.0130。",
+      "test_tpr_at_conformal": 0.0268,
+      "family_recall": {
+        "template": {
+          "n": 500,
+          "recall": 0.002
+        },
+        "paraphrase": {
+          "n": 500,
+          "recall": 0.034
+        },
+        "subtle": {
+          "n": 500,
+          "recall": 0.06
+        },
+        "backdoor": {
+          "n": 500,
+          "recall": 0.016
+        },
+        "edit": {
+          "n": 500,
+          "recall": 0.022
+        }
+      },
+      "n_pos": 2500
+    },
+    "mahalanobis": {
+      "empirical_threshold": 16.173883,
+      "empirical_dev_fpr": 0.010013,
+      "conformal_threshold": 16.290407,
+      "fpr_bound_conformal": 0.009676,
+      "alpha": 0.01,
+      "n_cal": 2996,
+      "k_ceil": 2968,
+      "test_n": 2997,
+      "test_fpr_achieved": 0.014348,
+      "test_fpr_upper_hoeffding": 0.039156,
+      "bound_kind": "split_conformal_exchangeability",
+      "note": "阈值=第⌈(1−α)(n+1)⌉=2968小的校准分；可证 P(下一个干净样本误报) ≤ 0.0097（交换性，不依赖 test）；test 仅验证(m=2997)，实测误报 0.0143。",
+      "test_tpr_at_conformal": 0.1052,
+      "family_recall": {
+        "template": {
+          "n": 500,
+          "recall": 0.004
+        },
+        "paraphrase": {
+          "n": 500,
+          "recall": 0.062
+        },
+        "subtle": {
+          "n": 500,
+          "recall": 0.27
+        },
+        "backdoor": {
+          "n": 500,
+          "recall": 0.154
+        },
+        "edit": {
+          "n": 500,
+          "recall": 0.036
+        }
+      },
+      "n_pos": 2500
+    },
+    "iforest": {
+      "empirical_threshold": 0.640514,
+      "empirical_dev_fpr": 0.010013,
+      "conformal_threshold": 0.646985,
+      "fpr_bound_conformal": 0.009676,
+      "alpha": 0.01,
+      "n_cal": 2996,
+      "k_ceil": 2968,
+      "test_n": 2997,
+      "test_fpr_achieved": 0.012346,
+      "test_fpr_upper_hoeffding": 0.037154,
+      "bound_kind": "split_conformal_exchangeability",
+      "note": "阈值=第⌈(1−α)(n+1)⌉=2968小的校准分；可证 P(下一个干净样本误报) ≤ 0.0097（交换性，不依赖 test）；test 仅验证(m=2997)，实测误报 0.0123。",
+      "test_tpr_at_conformal": 0.0168,
+      "family_recall": {
+        "template": {
+          "n": 500,
+          "recall": 0.002
+        },
+        "paraphrase": {
+          "n": 500,
+          "recall": 0.022
+        },
+        "subtle": {
+          "n": 500,
+          "recall": 0.03
+        },
+        "backdoor": {
+          "n": 500,
+          "recall": 0.008
+        },
+        "edit": {
+          "n": 500,
+          "recall": 0.022
+        }
+      },
+      "n_pos": 2500
+    },
+    "sup_lr": {
+      "empirical_threshold": 0.328852,
+      "empirical_dev_fpr": 0.010013,
+      "conformal_threshold": 0.329938,
+      "fpr_bound_conformal": 0.009676,
+      "alpha": 0.01,
+      "n_cal": 2996,
+      "k_ceil": 2968,
+      "test_n": 2997,
+      "test_fpr_achieved": 0.020687,
+      "test_fpr_upper_hoeffding": 0.045495,
+      "bound_kind": "split_conformal_exchangeability",
+      "note": "阈值=第⌈(1−α)(n+1)⌉=2968小的校准分；可证 P(下一个干净样本误报) ≤ 0.0097（交换性，不依赖 test）；test 仅验证(m=2997)，实测误报 0.0207。",
+      "test_tpr_at_conformal": 0.4652,
+      "family_recall": {
+        "template": {
+          "n": 500,
+          "recall": 0.138
+        },
+        "paraphrase": {
+          "n": 500,
+          "recall": 0.436
+        },
+        "subtle": {
+          "n": 500,
+          "recall": 0.856
+        },
+        "backdoor": {
+          "n": 500,
+          "recall": 0.874
+        },
+        "edit": {
+          "n": 500,
+          "recall": 0.022
+        }
+      },
+      "n_pos": 2500
+    },
+    "sup_tfidf": {
+      "empirical_threshold": 0.260448,
+      "empirical_dev_fpr": 0.010013,
+      "conformal_threshold": 0.267541,
+      "fpr_bound_conformal": 0.009676,
+      "alpha": 0.01,
+      "n_cal": 2996,
+      "k_ceil": 2968,
+      "test_n": 2997,
+      "test_fpr_achieved": 0.008342,
+      "test_fpr_upper_hoeffding": 0.03315,
+      "bound_kind": "split_conformal_exchangeability",
+      "note": "阈值=第⌈(1−α)(n+1)⌉=2968小的校准分；可证 P(下一个干净样本误报) ≤ 0.0097（交换性，不依赖 test）；test 仅验证(m=2997)，实测误报 0.0083。",
+      "test_tpr_at_conformal": 0.8064,
+      "family_recall": {
+        "template": {
+          "n": 500,
+          "recall": 1.0
+        },
+        "paraphrase": {
+          "n": 500,
+          "recall": 0.998
+        },
+        "subtle": {
+          "n": 500,
+          "recall": 1.0
+        },
+        "backdoor": {
+          "n": 500,
+          "recall": 1.0
+        },
+        "edit": {
+          "n": 500,
+          "recall": 0.034
+        }
+      },
+      "n_pos": 2500
+    },
+    "fusion": {
+      "empirical_threshold": 0.989653,
+      "empirical_dev_fpr": 0.010013,
+      "conformal_threshold": 0.99032,
+      "fpr_bound_conformal": 0.009676,
+      "alpha": 0.01,
+      "n_cal": 2996,
+      "k_ceil": 2968,
+      "test_n": 2997,
+      "test_fpr_achieved": 0.008342,
+      "test_fpr_upper_hoeffding": 0.03315,
+      "bound_kind": "split_conformal_exchangeability",
+      "note": "阈值=第⌈(1−α)(n+1)⌉=2968小的校准分；可证 P(下一个干净样本误报) ≤ 0.0097（交换性，不依赖 test）；test 仅验证(m=2997)，实测误报 0.0083。",
+      "test_tpr_at_conformal": 0.8068,
+      "family_recall": {
+        "template": {
+          "n": 500,
+          "recall": 1.0
+        },
+        "paraphrase": {
+          "n": 500,
+          "recall": 0.998
+        },
+        "subtle": {
+          "n": 500,
+          "recall": 1.0
+        },
+        "backdoor": {
+          "n": 500,
+          "recall": 1.0
+        },
+        "edit": {
+          "n": 500,
+          "recall": 0.036
+        }
+      },
+      "n_pos": 2500
+    }
+  },
+  "seconds": 0.1
+}

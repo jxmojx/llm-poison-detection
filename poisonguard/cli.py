@@ -777,6 +777,7 @@ def cmd_report(cfg: Config, args) -> Path:
         distill=_read("distill.json"),
         redteam=_read("redteam.json"),
         struct=_read("struct.json"),
+        conformal=_read("conformal.json"),
     )
 
 
@@ -958,6 +959,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("hardneg", "硬负样本压力测试(攻击 vs 同样像传闻的无害新闻)"),
         ("distill", "判官蒸馏为毫秒级学生模型(降本环节)"),
         ("struct-train", "结构隔离判官：冻结 Qwen 主干 + 二分类头(A1)"),
+        ("conformal", "Conformal Prediction：把 1% FPR 变成带有限样本保证的声明(A2)"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
@@ -1014,6 +1016,9 @@ def build_parser() -> argparse.ArgumentParser:
                            help="头训练随机种子(默认 42)")
             p.add_argument("--qwen-model", default=None,
                            help="覆盖冻结主干: 0.5b / 1.5b / 完整 model id")
+        if name == "conformal":
+            p.add_argument("--alpha", type=float, default=0.01, dest="alpha",
+                           help="目标 FPR(默认 0.01)，同时是 conformal 的 α")
         if name == "redteam":
             p.add_argument("--rt-each", type=int, default=5,
                            help="每种注入载荷造几条文本")
@@ -1217,6 +1222,11 @@ def main(argv: list[str] | None = None) -> int:
                    out_path=_metrics_path(cfg, "struct.json"),
                    C=float(getattr(args, "struct_c", 1.0) or 1.0),
                    seed=int(getattr(args, "struct_seed", 42) or 42))
+    elif args.cmd == "conformal":
+        from .conformal import run_conformal
+
+        run_conformal(cfg, out_path=_metrics_path(cfg, "conformal.json"),
+                      alpha=float(getattr(args, "alpha", 0.01) or 0.01))
     elif args.cmd == "serve":
         cmd_serve(cfg, args)
     elif args.cmd == "scan":

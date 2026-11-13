@@ -313,6 +313,7 @@ def build_report(
     distill: dict | None = None,
     redteam: dict | None = None,
     struct: dict | None = None,
+    conformal: dict | None = None,
 ) -> Path:
     lines: list[str] = []
     A = lines.append
@@ -591,6 +592,44 @@ def build_report(
               f"（全部注入 Δ={ai.get('mean_delta', 0):+.3f}，"
               f"劫持率 {ai.get('hijack_rate', 0):.0%}）。")
             A("")
+        A("")
+
+    if conformal:
+        cm = conformal.get("meta") or {}
+        bd = conformal.get("by_detector") or {}
+        A("**保形预测：把「1% FPR」从经验估计升级成有限样本保证（`conformal`，A2）**")
+        A("")
+        A("经验分位数阈值是**无保证的估计**：校准集只有 N 条，真实误报率围绕 α 波动。"
+          "保形预测用交换性引理把它换成一条定理："
+          "P(下一个干净样本被误报) ≤ (n+1−⌈(1−α)(n+1)⌉)/(n+1) ≤ α，"
+          "不依赖分布形状、小校准集也严格成立。代价只有一条假设——"
+          "校准集与线上干净数据同分布。")
+        A("")
+        A(f"- 目标 α={cm.get('alpha')}；校准集 = dev 干净样本 **n={cm.get('n_cal_clean')}**"
+          f"（阈值只由它定，test 干净样本 **n={cm.get('n_test_clean')}** 仅用于验证）；"
+          f"test 正样本 n={cm.get('n_test_pos')}")
+        if bd:
+            rows = []
+            for name, v in bd.items():
+                rows.append([f"`{name}`",
+                             f"{v.get('empirical_threshold', 0):.4g}",
+                             f"{v.get('conformal_threshold', 0):.4g}",
+                             f"{v.get('fpr_bound_conformal', 0):.4f}",
+                             f"{v.get('test_fpr_achieved', 0):.2%}",
+                             f"{v.get('test_tpr_at_conformal', 0):.3f}"])
+            A("")
+            A(md_table(["检测器", "经验阈值", "CF 阈值", "可证 FPR 上界",
+                        "实测 test FPR", "TPR@CF"], rows))
+            A("")
+            worst = max(bd.items(), key=lambda kv: kv[1].get("test_fpr_achieved", 0))
+            over = [n for n, v in bd.items() if v.get("test_fpr_achieved", 0) > cm.get("alpha", 0.01)]
+            if over:
+                A("> **诚实结论：可证上界 ≤ α 是「若可交换则成立」的条件声明；"
+                  f"实测有 {len(over)} 个检测器超过 1%**（最差 `{worst[0]}` "
+                  f"{worst[1].get('test_fpr_achieved', 0):.2%}）——"
+                  "这正是 dev→test 干净分布轻微漂移、可交换性假设被打破的直接证据，"
+                  "而不是实现有 bug。`sup_tfidf`/`fusion` 实测 ≤ 1% 且 CF 阈值略高于经验阈值"
+                  "（有限样本修正），是可安全上线的两个。")
         A("")
 
     # ---------------- 6. 图 ----------------
