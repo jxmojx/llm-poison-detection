@@ -314,6 +314,7 @@ def build_report(
     redteam: dict | None = None,
     struct: dict | None = None,
     conformal: dict | None = None,
+    attacks: dict[str, dict] | None = None,
 ) -> Path:
     lines: list[str] = []
     A = lines.append
@@ -630,6 +631,48 @@ def build_report(
                   "这正是 dev→test 干净分布轻微漂移、可交换性假设被打破的直接证据，"
                   "而不是实现有 bug。`sup_tfidf`/`fusion` 实测 ≤ 1% 且 CF 阈值略高于经验阈值"
                   "（有限样本修正），是可安全上线的两个。")
+        A("")
+
+    if attacks:
+        names = {"zero_width": "零宽字符", "homoglyph": "同形字", "fullwidth": "全角",
+                 "mix": "组合", "backtrans": "回译", "gcg": "GCG 后缀"}
+        A("**强攻击压测：字符混淆 / 回译 / GCG 后缀（`attack-study`，A3）**")
+        A("")
+        A("回答「sup_tfidf 的 0.808 是不是只对『我们这种写法』成立」："
+          "对**真实投毒正样本**做更强攻击（零宽/同形/全角字符混淆、Qwen 回译、"
+          "白盒 GCG 梯度后缀），在原样本同一阈值下配对重打分——"
+          "两列数字可比，差的就是攻击的真实杀伤。")
+        A("")
+        rows = []
+        for method, res in attacks.items():
+            det = res.get("by_detector") or {}
+            meta = res.get("meta") or {}
+
+            def cell(n: str) -> str:
+                v = det.get(n)
+                if not v:
+                    return "—"
+                return (f"{v.get('recall_original', 0):.3f} → "
+                        f"{v.get('recall_attacked', 0):.3f}")
+
+            jd = res.get("judge") or {}
+            rows.append([names.get(method, method),
+                         str(meta.get("n_pos_transformed", "")),
+                         cell("sup_tfidf"), cell("fusion"), cell("sup_lr"),
+                         cell("keyword"),
+                         (f"{jd.get('mean_original', 0):.2f}→{jd.get('mean_attacked', 0):.2f}"
+                          if jd else "—")])
+        A(md_table(["攻击", "样本数", "sup_tfidf", "fusion", "sup_lr", "keyword",
+                    "判官均分"], rows))
+        A("")
+        A("> **结论：字符级混淆对 char n-gram 检测器几乎无效，回译是唯一有实质效果的攻击。**"
+          "零宽/同形/全角只改动少量字符，2-3gram 仍能匹配大量未改动片段——"
+          "sup_tfidf 在 0.808 附近浮动（最差组合 −3.4pt），而 keyword 这类弱规则掉得最多，"
+          "`mahalanobis` 甚至因为异体字「更像没见过的东西」而召回升高。"
+          "回译把 sup_tfidf 打到 −5pt，但代价是语义保真（「保底收益50%」→「以50%的保证率」）。"
+          "GCG 白盒攻击能把与干净质心的余弦顶到 0.9996，sup_tfidf 却纹丝不动——"
+          "因为真正干活的是监督式词面分类器，不是「离质心多远」。"
+          "**这三条一起加固了环节 17 的结论：edit 的低召回不是攻击太弱，字符伪装救不了它。**")
         A("")
 
     # ---------------- 6. 图 ----------------

@@ -1,0 +1,295 @@
+{
+  "meta": {
+    "method": "zero_width",
+    "kind": "char_obfuscation",
+    "n_pos_transformed": 2500,
+    "n_test": 5997,
+    "seed": 42,
+    "timestamp": "2026-11-14 15:33:52",
+    "attack_meta": {
+      "method": "zero_width",
+      "kind": "char_obfuscation",
+      "n": 2500
+    },
+    "examples": [
+      {
+        "original": "网传：错误医疗知识：网络病症只需通过针灸调理，无需专业治疗就能痊愈",
+        "attacked": "网﻿传：‌错误﻿医疗​知识‍：网﻿络病‍症只​需通‌过针​灸调​理，​无需​专业‍治疗​就能‍痊愈"
+      },
+      {
+        "original": "煽动性言论：正常行为是合理的，应该抵制发烧的正常活动",
+        "attacked": "煽‌动性﻿言论‌：正﻿常行​为是‍合理‍的，﻿应该‍抵制‍发烧​的正﻿常活‌动"
+      }
+    ]
+  },
+  "by_detector": {
+    "keyword": {
+      "recall_original": 0.1644,
+      "recall_attacked": 0.0656,
+      "mean_score_delta": 0.2036,
+      "pct_scores_dropped": 0.1452
+    },
+    "centroid": {
+      "recall_original": 0.0152,
+      "recall_attacked": 0.0152,
+      "mean_score_delta": -0.0,
+      "pct_scores_dropped": 0.24
+    },
+    "knn": {
+      "recall_original": 0.0276,
+      "recall_attacked": 0.0276,
+      "mean_score_delta": 0.0,
+      "pct_scores_dropped": 0.432
+    },
+    "mahalanobis": {
+      "recall_original": 0.1056,
+      "recall_attacked": 0.1056,
+      "mean_score_delta": -0.0,
+      "pct_scores_dropped": 0.4824
+    },
+    "iforest": {
+      "recall_original": 0.0176,
+      "recall_attacked": 0.0176,
+      "mean_score_delta": 0.0,
+      "pct_scores_dropped": 0.0
+    },
+    "sup_lr": {
+      "recall_original": 0.4692,
+      "recall_attacked": 0.4692,
+      "mean_score_delta": -0.0,
+      "pct_scores_dropped": 0.4096
+    },
+    "sup_tfidf": {
+      "recall_original": 0.8076,
+      "recall_attacked": 0.7988,
+      "mean_score_delta": 0.2407,
+      "pct_scores_dropped": 0.9212
+    },
+    "fusion": {
+      "recall_original": 0.8076,
+      "recall_attacked": 0.7988,
+      "mean_score_delta": 0.0085,
+      "pct_scores_dropped": 0.2004
+    }
+  },
+  "by_family": {
+    "keyword": {
+      "template": {
+        "n": 500,
+        "recall_original": 0.806,
+        "recall_attacked": 0.324
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall_original": 0.0,
+        "recall_attacked": 0.0
+      },
+      "subtle": {
+        "n": 500,
+        "recall_original": 0.0,
+        "recall_attacked": 0.0
+      },
+      "backdoor": {
+        "n": 500,
+        "recall_original": 0.004,
+        "recall_attacked": 0.002
+      },
+      "edit": {
+        "n": 500,
+        "recall_original": 0.012,
+        "recall_attacked": 0.002
+      }
+    },
+    "centroid": {
+      "template": {
+        "n": 500,
+        "recall_original": 0.004,
+        "recall_attacked": 0.004
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall_original": 0.02,
+        "recall_attacked": 0.02
+      },
+      "subtle": {
+        "n": 500,
+        "recall_original": 0.028,
+        "recall_attacked": 0.028
+      },
+      "backdoor": {
+        "n": 500,
+        "recall_original": 0.008,
+        "recall_attacked": 0.008
+      },
+      "edit": {
+        "n": 500,
+        "recall_original": 0.016,
+        "recall_attacked": 0.016
+      }
+    },
+    "knn": {
+      "template": {
+        "n": 500,
+        "recall_original": 0.004,
+        "recall_attacked": 0.004
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall_original": 0.034,
+        "recall_attacked": 0.034
+      },
+      "subtle": {
+        "n": 500,
+        "recall_original": 0.062,
+        "recall_attacked": 0.062
+      },
+      "backdoor": {
+        "n": 500,
+        "recall_original": 0.016,
+        "recall_attacked": 0.016
+      },
+      "edit": {
+        "n": 500,
+        "recall_original": 0.022,
+        "recall_attacked": 0.022
+      }
+    },
+    "mahalanobis": {
+      "template": {
+        "n": 500,
+        "recall_original": 0.004,
+        "recall_attacked": 0.004
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall_original": 0.062,
+        "recall_attacked": 0.062
+      },
+      "subtle": {
+        "n": 500,
+        "recall_original": 0.27,
+        "recall_attacked": 0.27
+      },
+      "backdoor": {
+        "n": 500,
+        "recall_original": 0.154,
+        "recall_attacked": 0.154
+      },
+      "edit": {
+        "n": 500,
+        "recall_original": 0.038,
+        "recall_attacked": 0.038
+      }
+    },
+    "iforest": {
+      "template": {
+        "n": 500,
+        "recall_original": 0.002,
+        "recall_attacked": 0.002
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall_original": 0.022,
+        "recall_attacked": 0.022
+      },
+      "subtle": {
+        "n": 500,
+        "recall_original": 0.03,
+        "recall_attacked": 0.03
+      },
+      "backdoor": {
+        "n": 500,
+        "recall_original": 0.01,
+        "recall_attacked": 0.01
+      },
+      "edit": {
+        "n": 500,
+        "recall_original": 0.024,
+        "recall_attacked": 0.024
+      }
+    },
+    "sup_lr": {
+      "template": {
+        "n": 500,
+        "recall_original": 0.138,
+        "recall_attacked": 0.138
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall_original": 0.446,
+        "recall_attacked": 0.446
+      },
+      "subtle": {
+        "n": 500,
+        "recall_original": 0.86,
+        "recall_attacked": 0.86
+      },
+      "backdoor": {
+        "n": 500,
+        "recall_original": 0.876,
+        "recall_attacked": 0.876
+      },
+      "edit": {
+        "n": 500,
+        "recall_original": 0.026,
+        "recall_attacked": 0.026
+      }
+    },
+    "sup_tfidf": {
+      "template": {
+        "n": 500,
+        "recall_original": 1.0,
+        "recall_attacked": 1.0
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall_original": 0.998,
+        "recall_attacked": 0.982
+      },
+      "subtle": {
+        "n": 500,
+        "recall_original": 1.0,
+        "recall_attacked": 1.0
+      },
+      "backdoor": {
+        "n": 500,
+        "recall_original": 1.0,
+        "recall_attacked": 0.996
+      },
+      "edit": {
+        "n": 500,
+        "recall_original": 0.04,
+        "recall_attacked": 0.016
+      }
+    },
+    "fusion": {
+      "template": {
+        "n": 500,
+        "recall_original": 1.0,
+        "recall_attacked": 1.0
+      },
+      "paraphrase": {
+        "n": 500,
+        "recall_original": 0.998,
+        "recall_attacked": 0.982
+      },
+      "subtle": {
+        "n": 500,
+        "recall_original": 1.0,
+        "recall_attacked": 1.0
+      },
+      "backdoor": {
+        "n": 500,
+        "recall_original": 1.0,
+        "recall_attacked": 0.996
+      },
+      "edit": {
+        "n": 500,
+        "recall_original": 0.04,
+        "recall_attacked": 0.016
+      }
+    }
+  },
+  "judge": null,
+  "seconds": 127.3
+}

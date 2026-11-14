@@ -765,6 +765,15 @@ def cmd_report(cfg: Config, args) -> Path:
     else:
         figures = [f for f in allfigs if not any(
             Path(f).stem.endswith(s) for s in ("_real", "_holdout", "_real_v3"))] or allfigs
+    attacks: dict[str, dict] = {}
+    for f in sorted(Path(cfg.metrics_dir).glob("strongattack_*.json")):
+        stem = f.stem
+        if RUN_SUFFIX and not stem.endswith(RUN_SUFFIX):
+            continue
+        method = stem[len("strongattack_"):]
+        if RUN_SUFFIX:
+            method = method[: -len(RUN_SUFFIX)]
+        attacks[method] = json.loads(f.read_text(encoding="utf-8"))
     return R.build_report(
         cfg,
         dataset_stats=_read("dataset_stats.json"),
@@ -778,6 +787,7 @@ def cmd_report(cfg: Config, args) -> Path:
         redteam=_read("redteam.json"),
         struct=_read("struct.json"),
         conformal=_read("conformal.json"),
+        attacks=attacks or None,
     )
 
 
@@ -960,6 +970,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("distill", "判官蒸馏为毫秒级学生模型(降本环节)"),
         ("struct-train", "结构隔离判官：冻结 Qwen 主干 + 二分类头(A1)"),
         ("conformal", "Conformal Prediction：把 1% FPR 变成带有限样本保证的声明(A2)"),
+        ("attack-study", "强攻击研究(A3)：零宽/同形/全角/回译/GCG 后缀 对真实投毒正样本的配对杀伤"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
@@ -1019,6 +1030,19 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "conformal":
             p.add_argument("--alpha", type=float, default=0.01, dest="alpha",
                            help="目标 FPR(默认 0.01)，同时是 conformal 的 α")
+        if name == "attack-study":
+            p.add_argument("--qwen-model", default=None,
+                           help="回译/判官用的 Qwen 版本: 0.5b / 1.5b / 完整 id")
+            p.add_argument("--method", default="zero_width",
+                           choices=("zero_width", "homoglyph", "fullwidth", "mix",
+                                    "backtrans", "gcg"),
+                           help="强攻击方法(默认 zero_width)")
+            p.add_argument("--sample", type=int, default=0,
+                           help="只取多少个正样本(0=全部；回译/GCG 建议 20)")
+            p.add_argument("--with-judge", dest="with_judge", action="store_true",
+                           help="额外用 qwen_logprob 判官打一遍(看语义层是否也掉)")
+            p.add_argument("--attack-seed", dest="attack_seed", type=int, default=42,
+                           help="强攻击采样/扰动种子(默认 42)")
         if name == "redteam":
             p.add_argument("--rt-each", type=int, default=5,
                            help="每种注入载荷造几条文本")
@@ -1227,6 +1251,15 @@ def main(argv: list[str] | None = None) -> int:
 
         run_conformal(cfg, out_path=_metrics_path(cfg, "conformal.json"),
                       alpha=float(getattr(args, "alpha", 0.01) or 0.01))
+    elif args.cmd == "attack-study":
+        from .strongattack import run_attack_study
+
+        _m = getattr(args, "method", "zero_width")
+        run_attack_study(cfg, method=_m,
+                         sample=int(getattr(args, "sample", 0) or 0),
+                         with_judge=bool(getattr(args, "with_judge", False)),
+                         seed=int(getattr(args, "attack_seed", 42) or 42),
+                         out_path=_metrics_path(cfg, f"strongattack_{_m}.json"))
     elif args.cmd == "serve":
         cmd_serve(cfg, args)
     elif args.cmd == "scan":
