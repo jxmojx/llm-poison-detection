@@ -25,6 +25,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import argparse
 import time
 from collections import deque
@@ -188,11 +190,18 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
 
     app = FastAPI(title="poisonguard 在线打分服务", version="1.0")
 
+    _build_lock = threading.Lock()
+
     def _scorer() -> PoisonScorer:
+        """懒装配 + 加锁：并发首请求会同时触发 build_scorer（装配要几秒），
+        不加锁时两个线程会各自 import transformers，先到的那个可能撞上
+        半初始化的模块（实测过一次 ImportError: cannot import name 'AutoModel'）。"""
         if scorer is not None:
             return scorer
         if "s" not in state:
-            state["s"] = build_scorer(cfg, student_path=_student())
+            with _build_lock:
+                if "s" not in state:
+                    state["s"] = build_scorer(cfg, student_path=_student())
         return state["s"]
 
     @app.get("/health")
