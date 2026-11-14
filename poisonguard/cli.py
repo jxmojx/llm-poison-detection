@@ -951,6 +951,7 @@ ARG_DEFAULTS = {
     "sign_key": None,
     "sign_key_file": None,
     "require_signature": False,
+    "db": None, "host": "127.0.0.1", "port": 8077,
     "inbox": "data/inbox", "files": [], "pattern": "*.txt,*.csv,*.tsv,*.jsonl,*.json",
     "fmt": "auto", "column": "text", "limit": 0, "watch_band": 0.05,
     "threshold": None, "bundle": None, "verify_ed25519": None,
@@ -980,6 +981,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("ranker", "学生排序器(A5)：字符 n-gram / 句向量 / 混合 / PCA / MLP 受控对比"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("ingest", "入库钩子(C2)：投递目录 → 自动打分 → 隔离/人审/放行 + 判决台账"),
+        ("review", "人审台(C1)：BLOCK/WATCH 队列 → 判定 + 理由码落库"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
         ("keygen", "生成 ed25519 作者密钥对(私钥签、公钥验，真实供应链形态)"),
@@ -1062,6 +1064,13 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "redteam":
             p.add_argument("--rt-each", type=int, default=5,
                            help="每种注入载荷造几条文本")
+        if name == "review":
+            p.add_argument("--out-dir", dest="out_dir", default="outputs/ingest",
+                           help="ingest 产物目录（读 quarantine/ 与 review/）")
+            p.add_argument("--db", default=None,
+                           help="判决库路径（默认 <out-dir>/review.sqlite3）")
+            p.add_argument("--host", default="127.0.0.1")
+            p.add_argument("--port", type=int, default=8077)
         if name == "serve":
             p.add_argument("--host", default="127.0.0.1")
             p.add_argument("--port", type=int, default=8000)
@@ -1327,6 +1336,17 @@ def main(argv: list[str] | None = None) -> int:
                          with_judge=bool(getattr(args, "with_judge", False)),
                          seed=int(getattr(args, "attack_seed", 42) or 42),
                          out_path=_metrics_path(cfg, f"strongattack_{_m}.json"))
+    elif args.cmd == "review":
+        from .review import create_review_app
+
+        import uvicorn
+
+        out_dir = getattr(args, "out_dir", "outputs/ingest")
+        app = create_review_app(out_dir, getattr(args, "db", None))
+        host = getattr(args, "host", "127.0.0.1")
+        port = int(getattr(args, "port", 8077))
+        print(f"[review] http://{host}:{port}  队列={out_dir}（无鉴权，别暴露公网）")
+        uvicorn.run(app, host=host, port=port, log_level="warning")
     elif args.cmd == "serve":
         cmd_serve(cfg, args)
     elif args.cmd == "ingest":

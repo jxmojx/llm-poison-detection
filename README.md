@@ -76,6 +76,7 @@ python -m poisonguard.cli conformal $V3  # 保形预测（A2）：把「1% FPR�
 python -m poisonguard.cli attack-study $V3 --method mix --qwen-model 0.5b   # 强攻击压测（A3）：零宽/同形/全角/回译/GCG（环节 20）
 python -m poisonguard.cli ranker $V3      # 学生排序器受控对比（A5）：6 特征变体 × teacher/真标签（环节 21）
 python -m poisonguard.cli ingest --inbox data/inbox                 # 入库门禁（C2）：投递目录 → 隔离/人审/放行 + 台账
+python -m poisonguard.cli review --out-dir outputs/ingest --port 8077  # 人审台（C1）：浏览器打开，j/k 移动、1/2/3 判定
 python -m poisonguard.cli keygen --out-dir outputs/keys            # ed25519 作者密钥对（B2）
 python scripts/ci_smoke.py                                         # 端到端烟测：tiny 编码器跑通五段链路（B6）
 python -m poisonguard.cli redteam $V3    # 判官提示注入红队（plain / 加固 / 加固+脱敏 三档配对）
@@ -83,10 +84,10 @@ python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob -
 python -m poisonguard.cli report  $V3    # → docs/实验报告_real_v3.md
 python -m poisonguard.cli serve   $V3 --port 8000   # FastAPI: /health /score /stats
 python -m poisonguard.cli doctor                     # 环境自检（换机器先跑这个）
-python -m pytest tests/ -q                           # 108 项测试（data/detect/judge/distill/serve/scan/deploy/ingest/redteam-sanitize/evade/struct/conformal/strongattack/ranker）
+python -m pytest tests/ -q                           # 119 项测试（data/detect/judge/distill/serve/scan/deploy/ingest/review/redteam-sanitize/evade/struct/conformal/strongattack/ranker）
 ```
 
-`make` 里已经固化了这套：`make data|detect|judge|distill|struct-train|conformal|attack-study|ranker|keygen|smoke|ingest|redteam|report|serve|test|doctor`。
+`make` 里已经固化了这套：`make data|detect|judge|distill|struct-train|conformal|attack-study|ranker|keygen|smoke|ingest|review|redteam|report|serve|test|doctor`。
 
 **v3 一句话结论**：v2 里无监督 kNN 的 AUROC 0.997 在真实语料上掉到 **0.438**（低于随机），字符 n-gram 从 1.000 掉到 0.938 且对"只改一个事实"的投毒召回仅 **0.040** —— 高分主要来自合成攻击的措辞口音，不是检测能力。语义层用 logprob 打分后单条 0.782s，作为级联第二级在 40% 预算下把召回做到 47%（kNN 闸门只有 27%）；蒸馏后单条 **0.045ms**。
 
@@ -380,7 +381,7 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 - `outputs/metrics/*.json` 里记录 `encoder / target_fpr / n_train / n_dev / n_test / timestamp`，报告由脚本生成而非手抄
 - v3 起每条指标另带 `provenance`：`git_sha / git_dirty / python / platform / seed / clean_source / edit_family / n_hardneg / qwen / config_hash / 依赖版本`
 - 严格口径开关：`--style-holdout`（dev/test 用互不相交的模板骨架）、`--clean-source tnews`（干净侧换真实新闻）、`--run-tag v3`（产物加后缀，与旧口径并存）
-- 108 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式、ed25519 往返/篡改拒绝、tiny 编码器确定性、入库三档边界/sha 幂等/row_id 保留**（108 项全绿）
+- 108 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式、ed25519 往返/篡改拒绝、tiny 编码器确定性、入库三档边界/sha 幂等/row_id 保留、人审队列去重/upsert/非法理由拒绝/HTTP 契约**（119 项全绿）
 - 两列 TPR@1% 都报：`tpr_at_fpr1`（在 test 上找阈值，乐观上界）与 `tpr_at_fpr1_devcal`（阈值只由 dev 定，报告用这一列）。v3 实测 sup_tfidf 两列相等（0.808）、sup_lr 从 0.371 升到 0.469 —— 阈值调优不是虚高的主要来源。
 - `doctor` 子命令做环境自检（13 个依赖 + 编码器/数据/权重路径），换机器第一件事就跑它
 - **场景四完整复现（学生排序 TopK → LLM 判官精判）**：本机已有产物的快速路径（约 10 秒）、干净机器全量 6 步、预期输出与产物位置见 [`docs/复现步骤.md`](docs/复现步骤.md)，复现脚本为 [`examples/repro_scene4.py`](examples/repro_scene4.py)
@@ -409,3 +410,4 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 17. **粗排不该承担「按家族排序」**：`ranker`（`poisonguard/ranker.py`，环节 21）做 6 特征变体 × 2 监督源的受控对比——换特征（n-gram/句向量/拼接/PCA/MLP/双头）**完全不改善** edit 在 Top5% 的富集（lift ≤0.72）；换成 dev 真标签监督能把 GT-AUROC 从 0.61 提到 **0.94**，但 edit@Top5% 仍是 **0**（合成家族天生更响，占满 TopK）。单训 `edit-vs-其余` 专头可把 Top5% 召回拉到 13.2%（lift 2.64），但专头自身 AUC 只有 0.64，且双通道并集要 2× 预算。**正确的任务定义是「粗排把毒捞进复核队列（GT-AUROC 0.94），家族召回交给检测级与判官」。**
 18. **发布物签名已换成非对称形态，CI 也真的跑链路了**：`keygen` 生成 ed25519 密钥对，作者用 `deploy --sign-ed25519 author.key` 私钥签、部署方用 `run --verify-ed25519 author.pub` 公钥验（HMAC 保留为轻量模式）；`scripts/ci_smoke.py` 用内置 `TinyEncoder`（blake2b 哈希 64 维、零下载）跑通 **data→detect→scan→deploy→run** 五段，并断言 deploy→run 的逐条分数与 scan 完全一致、错密钥/无密钥必须被拒。注意：烟测语料是合成小样本，指标会是 1.0——**它证明接线，不证明效果**。
 19. **入库目前是「目录轮询」，不是事件订阅**：`ingest`（`poisonguard/ingest.py`，环节 23）把 scan 变成「投递目录 → 自动分档 → sqlite 台账」，可按 `file_sha+row_id` 幂等重放、每条判决带 model/pkg_sha/threshold，但真实接入仍需一个对象存储/Kafka 消费者把文件落到 inbox（或直接把 `Ingestor.ingest_file` 嵌进对方 worker）；`--watch` 常驻模式是单机单进程假设，没有并发锁与断点续传。
+20. **人审台是内网工具，不是产品**：`review`（`poisonguard/review.py`，环节 24）单页读队列、键盘判定、理由码落 sqlite、可导出 CSV，但**没有鉴权**（别暴露公网）、没有批量操作与撤销、没有多人分派；理由码是封闭集，业务扩展要改 `REASONS`。它存在的意义是把「判完的结论」变成 C4 可用的标签。
