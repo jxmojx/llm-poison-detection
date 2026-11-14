@@ -34,3 +34,5 @@ outputs/scan/
 outputs/keys/
 .ci_ingest/
 outputs/ingest/
+.acc_ingest/
+.acc_watch/
