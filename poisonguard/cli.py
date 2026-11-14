@@ -788,6 +788,7 @@ def cmd_report(cfg: Config, args) -> Path:
         struct=_read("struct.json"),
         conformal=_read("conformal.json"),
         attacks=attacks or None,
+        ranker=_read("ranker.json"),
     )
 
 
@@ -971,6 +972,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("struct-train", "结构隔离判官：冻结 Qwen 主干 + 二分类头(A1)"),
         ("conformal", "Conformal Prediction：把 1% FPR 变成带有限样本保证的声明(A2)"),
         ("attack-study", "强攻击研究(A3)：零宽/同形/全角/回译/GCG 后缀 对真实投毒正样本的配对杀伤"),
+        ("ranker", "学生排序器(A5)：字符 n-gram / 句向量 / 混合 / PCA / MLP 受控对比"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
@@ -1030,6 +1032,13 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "conformal":
             p.add_argument("--alpha", type=float, default=0.01, dest="alpha",
                            help="目标 FPR(默认 0.01)，同时是 conformal 的 α")
+        if name == "ranker":
+            p.add_argument("--rank-C", dest="rank_c", type=float, default=1.0,
+                           help="线性分类器正则强度倒数(默认 1.0)")
+            p.add_argument("--rank-topk", dest="rank_topk", type=int, default=40,
+                           help="算 edit 富集的 TopK(默认 40)")
+            p.add_argument("--rank-variants", dest="rank_variants", default="",
+                           help="逗号分隔的变体子集(默认全部 6 个)")
         if name == "attack-study":
             p.add_argument("--qwen-model", default=None,
                            help="回译/判官用的 Qwen 版本: 0.5b / 1.5b / 完整 id")
@@ -1251,6 +1260,15 @@ def main(argv: list[str] | None = None) -> int:
 
         run_conformal(cfg, out_path=_metrics_path(cfg, "conformal.json"),
                       alpha=float(getattr(args, "alpha", 0.01) or 0.01))
+    elif args.cmd == "ranker":
+        from .ranker import VARIANTS, run_ranker
+
+        _vs = tuple(v.strip() for v in str(getattr(args, "rank_variants", "") or "").split(",")
+                    if v.strip()) or VARIANTS
+        run_ranker(cfg, out_path=_metrics_path(cfg, "ranker.json"), variants=_vs,
+                   C=float(getattr(args, "rank_c", 1.0) or 1.0),
+                   seed=0,
+                   topk=int(getattr(args, "rank_topk", 40) or 40))
     elif args.cmd == "attack-study":
         from .strongattack import run_attack_study
 

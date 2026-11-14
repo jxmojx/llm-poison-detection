@@ -315,6 +315,7 @@ def build_report(
     struct: dict | None = None,
     conformal: dict | None = None,
     attacks: dict[str, dict] | None = None,
+    ranker: dict | None = None,
 ) -> Path:
     lines: list[str] = []
     A = lines.append
@@ -673,6 +674,46 @@ def build_report(
           "GCG 白盒攻击能把与干净质心的余弦顶到 0.9996，sup_tfidf 却纹丝不动——"
           "因为真正干活的是监督式词面分类器，不是「离质心多远」。"
           "**这三条一起加固了环节 17 的结论：edit 的低召回不是攻击太弱，字符伪装救不了它。**")
+        A("")
+
+    if ranker:
+        vs = ranker.get("variants") or {}
+        sp = (ranker.get("specialists") or {}).get("edit") or {}
+        A("**学生排序器升级：换特征为什么救不了 edit（`ranker`，A5）**")
+        A("")
+        A("粗排层用学生模型给全量 test 打分、取 TopK 送判官。上一轮发现 edit 在 TopK 里的"
+          "富集只有 0.6×（比随机还低），当时的假设是「特征太弱」。这一节做受控对比"
+          "推翻该假设：**6 种特征 × 2 种监督源，同一评价切片、同一阈值**。")
+        if vs:
+            rows = []
+            for k in sorted(vs):
+                ft = vs[k].get("full_test") or {}
+                ed = (ft.get("lift") or {}).get("top300", {}).get("edit", {})
+                rows.append([f"`{k}`", f"{vs[k].get('auroc')}",
+                             f"{vs[k].get('tpr_at_fpr1_devcal')}",
+                             f"{ft.get('gt_auroc')}",
+                             f"{ed.get('recall_in_topk', 0):.1%} / {ed.get('lift', 0)}"])
+            A("")
+            A(md_table(["变体@监督源", "AUROC(软标签切片)",
+                        "TPR@1%(dev校准)", "GT-AUROC(全量)", "edit@Top5% 召回/富集"], rows))
+            A("")
+            A("> **换特征零改善。** teacher 协议下 edit@Top5% 富集全部 ≤0.72；"
+              "换成 dev 真标签监督后整体检测能力从 0.61 跳到 **0.94**，"
+              "edit@Top5% 却仍是 **0**——edit 一个都没进 Top300。"
+              "根因不是「分不清毒」，而是「在毒里面 edit 不够响」："
+              "合成家族天生异常信号更强，占满 TopK。")
+            A("")
+        if sp:
+            u5 = (sp.get("union") or {}).get("top5pct") or {}
+            l5 = (sp.get("lift") or {}).get("top300", {}).get("edit", {})
+            A(f"- 单训 `edit-vs-其余` 专头（200 条 dev 标签，句向量）："
+              f"AUC={sp.get('auc_vs_all')}、edit@Top5% 召回 **{l5.get('recall_in_topk', 0):.1%}**、"
+              f"富集 **{l5.get('lift')}**；双通道并集（通用 ∪ 专头）召回 "
+              f"{u5.get('target_recall', 0):.1%}，但要 "
+              f"{u5.get('n_union')} 条（2× 预算）")
+            A("- **结论**：粗排的职责是「用最低成本把毒捞进复核队列」（GT-AUROC 0.94 已够），"
+              "**不该承担「按家族排序」**；家族级召回交给检测级（sup_tfidf edit 0.808）与判官。"
+              "这条修正了场景四的旧解释——edit 排不上来不是特征不行，是任务定义错了。")
         A("")
 
     # ---------------- 6. 图 ----------------

@@ -74,15 +74,16 @@ python -m poisonguard.cli distill $V3    # 判官 → 毫秒级学生模型
 python -m poisonguard.cli struct-train $V3 --qwen-model 0.5b   # 结构隔离判官（A1）：冻结主干+二分类头，判官不解析指令（环节 18）
 python -m poisonguard.cli conformal $V3  # 保形预测（A2）：把「1% FPR」变成有限样本保证（环节 19，0.1s）
 python -m poisonguard.cli attack-study $V3 --method mix --qwen-model 0.5b   # 强攻击压测（A3）：零宽/同形/全角/回译/GCG（环节 20）
+python -m poisonguard.cli ranker $V3      # 学生排序器受控对比（A5）：6 特征变体 × teacher/真标签（环节 21）
 python -m poisonguard.cli redteam $V3    # 判官提示注入红队（plain / 加固 / 加固+脱敏 三档配对）
 python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob --judge-hardened --judge-sanitize --limit 40
 python -m poisonguard.cli report  $V3    # → docs/实验报告_real_v3.md
 python -m poisonguard.cli serve   $V3 --port 8000   # FastAPI: /health /score /stats
 python -m poisonguard.cli doctor                     # 环境自检（换机器先跑这个）
-python -m pytest tests/ -q                           # 84 项测试（data/detect/judge/distill/serve/scan/deploy/redteam-sanitize/evade/struct/conformal/strongattack）
+python -m pytest tests/ -q                           # 92 项测试（data/detect/judge/distill/serve/scan/deploy/redteam-sanitize/evade/struct/conformal/strongattack/ranker）
 ```
 
-`make` 里已经固化了这套：`make data|detect|judge|distill|struct-train|conformal|attack-study|redteam|report|serve|test|doctor`。
+`make` 里已经固化了这套：`make data|detect|judge|distill|struct-train|conformal|attack-study|ranker|redteam|report|serve|test|doctor`。
 
 **v3 一句话结论**：v2 里无监督 kNN 的 AUROC 0.997 在真实语料上掉到 **0.438**（低于随机），字符 n-gram 从 1.000 掉到 0.938 且对"只改一个事实"的投毒召回仅 **0.040** —— 高分主要来自合成攻击的措辞口音，不是检测能力。语义层用 logprob 打分后单条 0.782s，作为级联第二级在 40% 预算下把召回做到 47%（kNN 闸门只有 27%）；蒸馏后单条 **0.045ms**。
 
@@ -376,7 +377,7 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 - `outputs/metrics/*.json` 里记录 `encoder / target_fpr / n_train / n_dev / n_test / timestamp`，报告由脚本生成而非手抄
 - v3 起每条指标另带 `provenance`：`git_sha / git_dirty / python / platform / seed / clean_source / edit_family / n_hardneg / qwen / config_hash / 依赖版本`
 - 严格口径开关：`--style-holdout`（dev/test 用互不相交的模板骨架）、`--clean-source tnews`（干净侧换真实新闻）、`--run-tag v3`（产物加后缀，与旧口径并存）
-- 72 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1**（84 项全绿）
+- 72 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式**（92 项全绿）
 - 两列 TPR@1% 都报：`tpr_at_fpr1`（在 test 上找阈值，乐观上界）与 `tpr_at_fpr1_devcal`（阈值只由 dev 定，报告用这一列）。v3 实测 sup_tfidf 两列相等（0.808）、sup_lr 从 0.371 升到 0.469 —— 阈值调优不是虚高的主要来源。
 - `doctor` 子命令做环境自检（13 个依赖 + 编码器/数据/权重路径），换机器第一件事就跑它
 - **场景四完整复现（学生排序 TopK → LLM 判官精判）**：本机已有产物的快速路径（约 10 秒）、干净机器全量 6 步、预期输出与产物位置见 [`docs/复现步骤.md`](docs/复现步骤.md)，复现脚本为 [`examples/repro_scene4.py`](examples/repro_scene4.py)
@@ -402,3 +403,4 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 14. **prompt 加规则的终点已到，结构隔离是终局**：`struct-train`（`poisonguard/struct.py`，环节 18）冻结 Qwen 主干 + 二分类头，判官**不解析指令**（无生成路径、无注入通道）。同一注入语料配对 Δ 压到 ~0、劫持率 19% → ~0%，且与 `qwen_logprob` 同切片 AUROC/TPR@1% 可比、CPU 可跑（0.5B 编码 20-40 分钟）。当前线性头容量有限，有 GPU 时换 LoRA 微调即可扩容。
 15. **「1% FPR」的保证是条件性的**：`conformal`（`poisonguard/conformal.py`，环节 19）用 split-conformal 给出 `P(误报) ≤ α` 的有限样本上界（交换性引理，无渐近假设，上界 0.0097），但它是**边际保证**、且以「校准集与线上干净数据同分布」为前提——v3 上线实测里 `sup_tfidf`/`fusion` 是 0.83%（达标），`knn`/`sup_lr` 是 1.30%/2.07%（超标），超标本身就是 dev→test 干净分布轻微漂移、可交换性被打破的直接证据。所以必须把「可证上界」与「实测 r̂」并列报，不能只报前者。
 16. **字符伪装救不了 edit，但语义改写能**：`attack-study`（`poisonguard/strongattack.py`，环节 20）对 2500 条真实投毒正样本做零宽/同形/全角字符混淆，sup_tfidf 只掉 ≤3.4pt（`mahalanobis` 反而因为异体字更像「没见过」而召回升高）；Qwen 回译掉 −5pt，但要付语义保真代价；白盒 GCG 能把与 CoROM 干净质心的余弦顶到 0.9996，sup_tfidf 纹丝不动——因为真正干活的是监督式词面分类器，不是「离质心多远」。这三次反向检验一致说明：**edit 的低召回是检测器能力上限，不是攻击太弱**。
+17. **粗排不该承担「按家族排序」**：`ranker`（`poisonguard/ranker.py`，环节 21）做 6 特征变体 × 2 监督源的受控对比——换特征（n-gram/句向量/拼接/PCA/MLP/双头）**完全不改善** edit 在 Top5% 的富集（lift ≤0.72）；换成 dev 真标签监督能把 GT-AUROC 从 0.61 提到 **0.94**，但 edit@Top5% 仍是 **0**（合成家族天生更响，占满 TopK）。单训 `edit-vs-其余` 专头可把 Top5% 召回拉到 13.2%（lift 2.64），但专头自身 AUC 只有 0.64，且双通道并集要 2× 预算。**正确的任务定义是「粗排把毒捞进复核队列（GT-AUROC 0.94），家族召回交给检测级与判官」。**

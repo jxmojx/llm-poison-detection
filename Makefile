@@ -10,6 +10,7 @@ help:
 	@echo "make distill  判官蒸馏"
 	@echo "make struct-train  结构隔离判官(冻结主干+二分类头, ~40 分钟)"
 	@echo "make conformal     保形预测: 可证 FPR 上界(读分数缓存, 秒级)"
+	@echo "make ranker        学生排序器受控对比(A5, 秒级~分钟级)"
 	@echo "make attack-study  强攻击压测: 零宽/同形/全角/回译/GCG(A3)"
 	@echo "make serve    起在线打分服务"
 	@echo "make test     单元测试"
@@ -41,6 +42,9 @@ struct-train:
 
 conformal:
 	$(PY) -m poisonguard.cli conformal $(V3)
+
+ranker:
+	$(PY) -m poisonguard.cli ranker $(V3)
 
 attack-study:
 	$(PY) -m poisonguard.cli attack-study $(V3) --method mix --qwen-model 0.5b
