@@ -13,6 +13,7 @@ help:
 	@echo "make ranker        学生排序器受控对比(A5, 秒级~分钟级)"
 	@echo "make keygen        生成 ed25519 作者密钥对"
 	@echo "make smoke         端到端烟测(tiny 编码器, 零下载, ~25s)"
+	@echo "make ingest        入库门禁(C2): 扫 data/inbox → 隔离/人审/放行 + 台账"
 	@echo "make attack-study  强攻击压测: 零宽/同形/全角/回译/GCG(A3)"
 	@echo "make serve    起在线打分服务"
 	@echo "make test     单元测试"
@@ -53,6 +54,9 @@ keygen:
 
 smoke:
 	$(PY) scripts/ci_smoke.py
+
+ingest:
+	$(PY) -m poisonguard.cli ingest $(V3) --inbox data/inbox
 
 attack-study:
 	$(PY) -m poisonguard.cli attack-study $(V3) --method mix --qwen-model 0.5b

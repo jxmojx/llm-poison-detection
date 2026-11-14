@@ -32,3 +32,5 @@ outputs/deploy/
 outputs/scan/
 .ci_smoke/
 outputs/keys/
+.ci_ingest/
+outputs/ingest/

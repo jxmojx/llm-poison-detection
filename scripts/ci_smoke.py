@@ -151,7 +151,23 @@ def main() -> int:
                  "--judge-topk", "0", expect_ok=False)
     assert nosig.returncode != 0, "未提供密钥竟然加载了已签名包"
 
-    print("\n[ci_smoke] 五段链路 + 签名链路全部通过 ✅")
+    # 7) ingest：投递目录 → 自动分档 + 台账幂等（C2）
+    inbox = WORK / "inbox"
+    inbox.mkdir()
+    (inbox / "batch_1.txt").write_text(demo.read_text(encoding="utf-8"),
+                                       encoding="utf-8", newline="\n")
+    ledger = WORK / "ingest"
+    ing_common = ["--bundle", str(pkg), "--sign-key", KEY,
+                  "--ledger-dir", str(ledger), "--out-dir", str(ledger)]
+    _run("ingest", *ing_common, "--inbox", str(inbox), "--watch-band", "0")
+    # 再跑一次：同一文件必须被 sha256 台账挡住，不能重复入账
+    again = _run("ingest", *ing_common, "--inbox", str(inbox), "--watch-band", "0")
+    blob = (again.stdout or "") + (again.stderr or "")
+    assert "跳过" in blob, "重复投递同一个文件应该被台账跳过（幂等），实际又处理了一遍"
+    assert (ledger / "quarantine").exists() or (ledger / "released").exists(), \
+        "ingest 没有产出分档目录"
+
+    print("\n[ci_smoke] 六段链路(含 ingest 幂等) + 签名链路全部通过 ✅")
     shutil.rmtree(WORK, ignore_errors=True)
     return 0
 

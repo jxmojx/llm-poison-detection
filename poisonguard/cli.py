@@ -951,6 +951,11 @@ ARG_DEFAULTS = {
     "sign_key": None,
     "sign_key_file": None,
     "require_signature": False,
+    "inbox": "data/inbox", "files": [], "pattern": "*.txt,*.csv,*.tsv,*.jsonl,*.json",
+    "fmt": "auto", "column": "text", "limit": 0, "watch_band": 0.05,
+    "threshold": None, "bundle": None, "verify_ed25519": None,
+    "ledger_dir": "outputs/ingest", "out_dir": "outputs/ingest",
+    "watch": False, "poll": 10.0, "max_files": 0, "no_explain": False,
     "struct_c": 1.0,
     "struct_seed": 42,
 }
@@ -974,6 +979,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("attack-study", "强攻击研究(A3)：零宽/同形/全角/回译/GCG 后缀 对真实投毒正样本的配对杀伤"),
         ("ranker", "学生排序器(A5)：字符 n-gram / 句向量 / 混合 / PCA / MLP 受控对比"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
+        ("ingest", "入库钩子(C2)：投递目录 → 自动打分 → 隔离/人审/放行 + 判决台账"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
         ("keygen", "生成 ed25519 作者密钥对(私钥签、公钥验，真实供应链形态)"),
@@ -1060,6 +1066,40 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--host", default="127.0.0.1")
             p.add_argument("--port", type=int, default=8000)
             p.add_argument("--student", default=None, help="学生模型 pkl 路径")
+        if name == "ingest":
+            p.add_argument("--inbox", default="data/inbox",
+                           help="投递目录：新落地的 txt/csv/jsonl 会被自动处理")
+            p.add_argument("--file", dest="files", action="append", default=[],
+                           help="显式指定单个文件（可重复），给了就不扫 --inbox")
+            p.add_argument("--pattern", default="*.txt,*.csv,*.tsv,*.jsonl,*.json",
+                           help="投递目录的文件通配（逗号分隔）")
+            p.add_argument("--format", dest="fmt", default="auto",
+                           choices=["auto", "txt", "csv", "jsonl"], help="输入格式")
+            p.add_argument("--column", default="text", help="csv/jsonl 的文本列名")
+            p.add_argument("--limit", type=int, default=0, help="每个文件最多取多少行(0=全部)")
+            p.add_argument("--watch-band", dest="watch_band", type=float, default=0.05,
+                           help="WATCH 带宽度：阈值下方这一区间进人审队列(0=只分两档)")
+            p.add_argument("--threshold", type=float, default=None,
+                           help="覆盖门禁阈值（默认取 scorer.threshold）")
+            p.add_argument("--bundle", default=None,
+                           help="用已签名的 .pkg 打分（部署形态；默认用本地拟合态）")
+            p.add_argument("--verify-ed25519", dest="verify_ed25519", default=None,
+                           help="验证 .pkg 的 ed25519 公钥（配合 --bundle）")
+            p.add_argument("--sign-key", dest="sign_key", default=None,
+                           help="验证 .pkg 的 HMAC 密钥（老包/轻量模式）")
+            p.add_argument("--sign-key-file", dest="sign_key_file", default=None,
+                           help="从文件读取 HMAC 密钥")
+            p.add_argument("--ledger-dir", dest="ledger_dir", default="outputs/ingest",
+                           help="判决台账(sqlite)目录")
+            p.add_argument("--out-dir", dest="out_dir", default="outputs/ingest",
+                           help="隔离/人审/放行 jsonl 的输出目录")
+            p.add_argument("--watch", action="store_true",
+                           help="常驻轮询投递目录（默认只跑一轮就退出）")
+            p.add_argument("--poll", type=float, default=10.0, help="轮询间隔秒")
+            p.add_argument("--max-files", dest="max_files", type=int, default=0,
+                           help="单轮最多处理多少个文件(0=不限)")
+            p.add_argument("--no-explain", dest="no_explain", action="store_true",
+                           help="不记录各视图分数（省体积）")
         if name == "scan":
             p.add_argument("--input", required=True,
                            help="待扫描文件：txt(一行一句) / csv / tsv / jsonl")
@@ -1289,6 +1329,10 @@ def main(argv: list[str] | None = None) -> int:
                          out_path=_metrics_path(cfg, f"strongattack_{_m}.json"))
     elif args.cmd == "serve":
         cmd_serve(cfg, args)
+    elif args.cmd == "ingest":
+        from .ingest_cmd import cmd_ingest
+
+        cmd_ingest(cfg, args)
     elif args.cmd == "scan":
         from .scan import cmd_scan
 
