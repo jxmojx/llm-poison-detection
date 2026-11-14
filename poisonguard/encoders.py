@@ -131,6 +131,11 @@ _MODEL_SPECS = {
         "dir": "model_cache/bge-small-zh-v1.5",
         "max_length": 512,
     },
+    "tiny": {
+        "model_id": "(builtin)",
+        "dir": "",
+        "max_length": 64,
+    },
     "qwen3": {
         "model_id": "Qwen/Qwen3-Embedding-0.6B",
         "dir": "model_cache/Qwen3-Embedding-0.6B",
@@ -139,10 +144,55 @@ _MODEL_SPECS = {
 }
 
 
-def get_encoder(cfg) -> SentenceEncoder:
+class TinyEncoder:
+    """确定性哈希编码器：**不下载任何权重**，专供 CI 端到端烟测。
+
+    为什么需要它：真实编码器要下 100M+ 权重，CI 里几分钟跑不完、还会因为
+    网络抖动而红。这个编码器用 blake2b 把字符 2-3gram 有符号哈希到固定维度，
+    完全确定、纯 numpy，几秒就能编码上万条——它不追求效果，只保证
+    "data → detect → scan → deploy → run" 五段链路的接线能被真的跑一遍。
+    """
+
+    def __init__(self, dim: int = 64, max_length: int = 64, normalize: bool = True,
+                 cache_dir=None, **_ignored):
+        self.dim = int(dim)
+        self.max_length = int(max_length)
+        self.normalize = bool(normalize)
+        self.name = "tiny"
+        self.model_dir = "(builtin:tiny)"
+        self.cache_dir = cache_dir
+
+    def _vec(self, text: str) -> np.ndarray:
+        v = np.zeros(self.dim, dtype=np.float64)
+        s = f" {text} "
+        for n in (2, 3):
+            for i in range(len(s) - n + 1):
+                g = s[i:i + n]
+                h = hashlib.blake2b(g.encode("utf-8"), digest_size=8).digest()
+                idx = int.from_bytes(h[:4], "little") % self.dim
+                v[idx] += 1.0 if (h[4] & 1) else -1.0
+        if self.normalize:
+            norm = float(np.linalg.norm(v))
+            if norm > 0:
+                v /= norm
+        return v
+
+    def encode(self, texts, use_cache: bool = True) -> np.ndarray:
+        texts = list(texts)
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float32)
+        return np.stack([self._vec(t) for t in texts]).astype(np.float32)
+
+
+def get_encoder(cfg):
     """按 cfg.encoder 构造编码器。"""
     ecfg = cfg.encoder
     name = ecfg.name
+    if name == "tiny":
+        return TinyEncoder(dim=getattr(ecfg, "tiny_dim", 64),
+                           max_length=ecfg.max_length,
+                           normalize=ecfg.normalize,
+                           cache_dir=ecfg.cache_dir)
     spec = _MODEL_SPECS.get(name)
     if spec is not None and not Path(ecfg.model_dir).exists():
         # 允许 model_dir 指向还没下载的默认位置

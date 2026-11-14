@@ -275,6 +275,98 @@ def _sign_container(container: dict, key: str) -> str:
                     hashlib.sha256).hexdigest()
 
 
+# ---------------- ed25519（非对称签名：作者私钥签、部署方公钥验） ----------------
+def _load_ed25519_private(path: str | Path):
+    """读私钥：支持 PEM 与裸 32 字节 seed 的 hex/base64。"""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"ed25519 私钥不存在: {p}")
+    raw = p.read_bytes()
+    if b"-----BEGIN" in raw:
+        key = serialization.load_pem_private_key(raw, password=None)
+        if not isinstance(key, Ed25519PrivateKey):
+            raise ValueError("私钥不是 ed25519")
+        return key
+    text = raw.decode("utf-8", errors="replace").strip()
+    try:
+        seed = bytes.fromhex(text)
+    except ValueError:
+        import base64
+
+        seed = base64.b64decode(text)
+    if len(seed) != 32:
+        raise ValueError(f"ed25519 私钥应是 32 字节（hex 64 字符），实际 {len(seed)} 字节")
+    return Ed25519PrivateKey.from_private_bytes(seed)
+
+
+def _load_ed25519_public(path: str | Path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"ed25519 公钥不存在: {p}")
+    raw = p.read_bytes()
+    if b"-----BEGIN" in raw:
+        key = serialization.load_pem_public_key(raw)
+        if not isinstance(key, Ed25519PublicKey):
+            raise ValueError("公钥不是 ed25519")
+        return key
+    text = raw.decode("utf-8", errors="replace").strip()
+    try:
+        seed = bytes.fromhex(text)
+    except ValueError:
+        import base64
+
+        seed = base64.b64decode(text)
+    if len(seed) != 32:
+        raise ValueError(f"ed25519 公钥应是 32 字节（hex 64 字符），实际 {len(seed)} 字节")
+    return Ed25519PublicKey.from_public_bytes(seed)
+
+
+def _sign_container_ed25519(container: dict, priv) -> str:
+    return priv.sign(_container_core(container)).hex()
+
+
+def _verify_container_ed25519(container: dict, sig_hex: str) -> bool:
+    from cryptography.exceptions import InvalidSignature
+
+    try:
+        pub = container["_pub"]
+        pub.verify(bytes.fromhex(sig_hex), _container_core(container))
+        return True
+    except (InvalidSignature, ValueError, KeyError):
+        return False
+
+
+def generate_ed25519_keypair(out_dir: str | Path, name: str = "author") -> tuple[Path, Path]:
+    """生成作者密钥对：私钥 hex 落盘并尽量设为 0600，公钥可自由分发。"""
+    from cryptography.hazmat.primitives import serialization
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    priv = Ed25519PrivateKey.generate()
+    priv_path = out / f"{name}.key"
+    pub_path = out / f"{name}.pub"
+    priv_path.write_text(priv.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption()).hex(), encoding="utf-8")
+    pub_path.write_text(priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw).hex(), encoding="utf-8")
+    try:
+        os.chmod(priv_path, 0o600)
+    except OSError:
+        pass
+    return priv_path, pub_path
+
+
 def _hash_file(path: Path, chunk: int = 1 << 20) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -305,6 +397,7 @@ def encoder_fingerprint(cfg: Config) -> str:
 
 
 def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
+                  ed25519_key: str | Path | None = None,
                   student_path: str | Path | None = None,
                   threshold: float | None = None,
                   quantize: str = "none",
@@ -369,11 +462,14 @@ def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
             "judge_threshold": state.judge_threshold,
             "created": state.provenance.get("created"),
             "encoder_fingerprint": fp,
-            "signed": bool(sign_key),
+            "signed": ("ed25519" if ed25519_key else ("hmac" if sign_key else None)),
         },
         "payload": payload,
     }
-    if sign_key:
+    if ed25519_key:
+        container["sig_ed25519"] = _sign_container_ed25519(
+            container, _load_ed25519_private(ed25519_key))
+    elif sign_key:
         container["sig"] = _sign_container(container, sign_key)
     with open(out_path, "wb") as f:
         pickle.dump(container, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -382,14 +478,17 @@ def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
           f"量化: {container['manifest']['quantize']})")
     print(f"[deploy] sha256={digest[:16]}…  payload={len(payload) / 1024:.0f} KB  "
           f"knn_refs={container['manifest']['knn_refs']}")
-    print(f"[deploy] 签名: {'HMAC-SHA256 已签' if sign_key else '未签名(仅完整性校验)'}  "
+    scheme = "ed25519 已签(作者私钥)" if ed25519_key else (
+        "HMAC-SHA256 已签(共享密钥)" if sign_key else "未签名(仅完整性校验)")
+    print(f"[deploy] 签名: {scheme}  "
           f"编码器指纹: {fp or '(未计算)'}")
     return out_path
 
 
 def load_bundle(path: str | Path, cfg: Config | None = None,
                 sign_key: str | None = None,
-                require_signature: bool = False) -> DeployedScorer:
+                require_signature: bool = False,
+                ed25519_pub: str | Path | None = None) -> DeployedScorer:
     """部署侧：加载 .pkg 并重建编码器(必须是打包容器的同一编码器)。"""
     from .encoders import get_encoder
 
@@ -409,7 +508,19 @@ def load_bundle(path: str | Path, cfg: Config | None = None,
         manifest = obj.get("manifest") or {}
         digest = got
         sig = str(obj.get("sig") or "")
-        if sig:
+        sig_ed = str(obj.get("sig_ed25519") or "")
+        if sig_ed:
+            if not ed25519_pub:
+                raise ValueError(
+                    ".pkg 用 ed25519 签名（作者私钥），未提供验证公钥"
+                    "（--verify-ed25519 author.pub）")
+            obj["_pub"] = _load_ed25519_public(ed25519_pub)
+            ok_ed = _verify_container_ed25519(obj, sig_ed)
+            obj.pop("_pub", None)
+            if not ok_ed:
+                raise ValueError(
+                    ".pkg ed25519 签名校验失败（公钥不匹配，或包在签名后被改动/替换）")
+        elif sig:
             if not sign_key:
                 raise ValueError(
                     ".pkg 已用 HMAC 签名，但未提供校验密钥"
@@ -419,7 +530,7 @@ def load_bundle(path: str | Path, cfg: Config | None = None,
                     ".pkg 签名校验失败（密钥不对，或包在签名后被改动/替换）")
         elif require_signature:
             raise ValueError(".pkg 未签名，但要求必须签名（--require-signature）；"
-                             "请让作者侧用 --sign-key 重新打包")
+                             "请让作者侧用 --sign-key 或 --sign-ed25519 重新打包")
         state: DeployState = pickle.loads(payload)
     else:  # 兼容旧格式：裸 DeployState（无 sha256/manifest）
         state = obj
@@ -457,7 +568,7 @@ def load_bundle(path: str | Path, cfg: Config | None = None,
     print(f"[run] 发布物校验通过: domain={manifest.get('domain') or state.domain} "
           f"quantize={quant} "
           f"sha256={(digest[:16] + '…') if digest else '(legacy, 无校验)'} "
-          f"签名={'已验' if manifest.get('signed') else '无'} "
+          f"签名={'已验(' + str(manifest.get('signed')) + ')' if manifest.get('signed') else '无'} "
           f"指纹={(manifest.get('encoder_fingerprint') or '-')}")
     return sc
 
@@ -470,7 +581,8 @@ def cmd_deploy(cfg: Config, args: argparse.Namespace) -> Path:
         threshold=getattr(args, "threshold", None),
         quantize=getattr(args, "quantize", "none") or "none",
         sign_key=_resolve_sign_key(getattr(args, "sign_key", None),
-                                   getattr(args, "sign_key_file", None)))
+                                   getattr(args, "sign_key_file", None)),
+        ed25519_key=getattr(args, "sign_ed25519", None))
 
 
 def cmd_run(cfg: Config, args: argparse.Namespace) -> dict:
@@ -485,7 +597,8 @@ def cmd_run(cfg: Config, args: argparse.Namespace) -> dict:
         args.bundle, cfg,
         sign_key=_resolve_sign_key(getattr(args, "sign_key", None),
                                    getattr(args, "sign_key_file", None)),
-        require_signature=bool(getattr(args, "require_signature", False)))
+        require_signature=bool(getattr(args, "require_signature", False)),
+        ed25519_pub=getattr(args, "verify_ed25519", None))
     result = scan_file(cfg, args.input, threshold=None,
                        judge_topk=getattr(args, "judge_topk", 0),
                        fmt=getattr(args, "format", "auto"),

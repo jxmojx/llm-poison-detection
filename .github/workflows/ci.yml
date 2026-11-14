@@ -37,10 +37,8 @@ jobs:
       - name: Unit tests
         run: python -m pytest tests/ -q
 
-      # 流水线接线冒烟：不碰模型，只验证 data→stats 两个环节能跑通。
-      # 缺少原始语料时不算失败（仓库可能不带数据）。
-      - name: Pipeline smoke (data stage)
-        continue-on-error: true
-        run: |
-          python -m poisonguard.cli data --run-tag ci
-          python -m poisonguard.cli doctor --run-tag ci
+      # 端到端烟测（B6）：内置 tiny 编码器，零下载，跑通
+      # data → detect → scan → deploy → run 五段链路 + 签名链路。
+      # 单元测试不加载模型，接线断了不会红；这一段才是防线。
+      - name: End-to-end smoke (tiny encoder)
+        run: python scripts/ci_smoke.py

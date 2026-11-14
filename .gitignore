@@ -30,3 +30,5 @@ data/raw/real_*.txt
 # 发布物/批扫产物：可重跑生成，不进仓库（体积大且随域变化）
 outputs/deploy/
 outputs/scan/
+.ci_smoke/
+outputs/keys/

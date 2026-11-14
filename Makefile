@@ -11,6 +11,8 @@ help:
 	@echo "make struct-train  结构隔离判官(冻结主干+二分类头, ~40 分钟)"
 	@echo "make conformal     保形预测: 可证 FPR 上界(读分数缓存, 秒级)"
 	@echo "make ranker        学生排序器受控对比(A5, 秒级~分钟级)"
+	@echo "make keygen        生成 ed25519 作者密钥对"
+	@echo "make smoke         端到端烟测(tiny 编码器, 零下载, ~25s)"
 	@echo "make attack-study  强攻击压测: 零宽/同形/全角/回译/GCG(A3)"
 	@echo "make serve    起在线打分服务"
 	@echo "make test     单元测试"
@@ -45,6 +47,12 @@ conformal:
 
 ranker:
 	$(PY) -m poisonguard.cli ranker $(V3)
+
+keygen:
+	$(PY) -m poisonguard.cli keygen --out-dir outputs/keys
+
+smoke:
+	$(PY) scripts/ci_smoke.py
 
 attack-study:
 	$(PY) -m poisonguard.cli attack-study $(V3) --method mix --qwen-model 0.5b

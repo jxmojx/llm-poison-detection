@@ -315,3 +315,75 @@ def test_encoder_fingerprint_tracks_weight_bytes(tmp_path: Path):
 
     (d / "model.safetensors").write_bytes(b"x" * 2048)          # 还原
     assert encoder_fingerprint(cfg) == fp1
+
+
+# ---------------------------------------------------------------- ed25519
+def _write_signed_ed25519(path: Path, state: DeployState, priv) -> Path:
+    """造一个用 ed25519 作者私钥签名的容器。"""
+    import hashlib
+
+    from poisonguard.deploy import _sign_container_ed25519
+
+    payload = pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
+    container = {
+        "format": "poisonguard.pkg",
+        "version": PKG_VERSION,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+        "manifest": {"domain": "afqmc", "signed": "ed25519"},
+        "payload": payload,
+    }
+    container["sig_ed25519"] = _sign_container_ed25519(container, priv)
+    path.write_bytes(pickle.dumps(container))
+    return path
+
+
+def test_generate_keypair_writes_32_byte_keys(tmp_path: Path):
+    from poisonguard.deploy import generate_ed25519_keypair
+
+    priv, pub = generate_ed25519_keypair(tmp_path / "k", "author")
+    assert priv.name == "author.key" and pub.name == "author.pub"
+    assert len(bytes.fromhex(priv.read_text(encoding="utf-8").strip())) == 32
+    assert len(bytes.fromhex(pub.read_text(encoding="utf-8").strip())) == 32
+
+
+def test_ed25519_roundtrip_accepts_author_and_rejects_others(tmp_path: Path, fake_encode):
+    from poisonguard.deploy import (_load_ed25519_private, generate_ed25519_keypair)
+
+    priv_path, pub_path = generate_ed25519_keypair(tmp_path / "k", "author")
+    _, other_pub = generate_ed25519_keypair(tmp_path / "o", "other")
+    p = _write_signed_ed25519(tmp_path / "ed.pkg", _state(),
+                              _load_ed25519_private(priv_path))
+    assert load_bundle(p, ed25519_pub=pub_path).domain == "afqmc"
+    with pytest.raises(ValueError, match="ed25519 签名校验失败"):
+        load_bundle(p, ed25519_pub=other_pub)
+    with pytest.raises(ValueError, match="未提供验证公钥"):
+        load_bundle(p)
+
+
+def test_ed25519_rejects_tampered_manifest(tmp_path: Path, fake_encode):
+    import pickle as _p
+
+    from poisonguard.deploy import _load_ed25519_private, generate_ed25519_keypair
+
+    priv_path, pub_path = generate_ed25519_keypair(tmp_path / "k", "author")
+    p = _write_signed_ed25519(tmp_path / "ed.pkg", _state(),
+                              _load_ed25519_private(priv_path))
+    obj = _p.loads(p.read_bytes())
+    obj["manifest"]["threshold"] = 0.1  # 改了 manifest 但没重签
+    p.write_bytes(_p.dumps(obj))
+    with pytest.raises(ValueError, match="ed25519 签名校验失败"):
+        load_bundle(p, ed25519_pub=pub_path)
+
+
+def test_tiny_encoder_is_deterministic_and_normalized():
+    from poisonguard.encoders import TinyEncoder
+
+    enc = TinyEncoder(dim=32)
+    a = enc.encode(["今天天气不错", "投毒标题"])
+    b = enc.encode(["今天天气不错", "投毒标题"])
+    assert a.shape == (2, 32)
+    assert np.array_equal(a, b), "同一输入必须得到同一向量（CI 要可复现）"
+    norms = np.linalg.norm(a, axis=1)
+    assert np.allclose(norms, 1.0), "L2 归一化后余弦才有意义"
+    assert not np.array_equal(a[0], a[1])

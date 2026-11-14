@@ -976,6 +976,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
+        ("keygen", "生成 ed25519 作者密钥对(私钥签、公钥验，真实供应链形态)"),
         ("deploy", "把训练产物打包成单文件 .pkg(拟合态, 数据不出域)"),
         ("run", "加载 .pkg 离线批扫(部署机免装配, 复用 scan 报告)"),
         ("doctor", "环境自检：依赖/模型缓存/数据/产物"),
@@ -1076,6 +1077,10 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--out-prefix", default=None,
                            help="输出文件前缀（默认 outputs/scan/<输入文件名>）")
             p.add_argument("--no-html", action="store_true", help="不生成 HTML 报告")
+        if name == "keygen":
+            p.add_argument("--out-dir", dest="keygen_dir", default="outputs/keys",
+                           help="密钥输出目录(默认 outputs/keys)")
+            p.add_argument("--name", default="author", help="密钥名(默认 author)")
         if name == "deploy":
             p.add_argument("--out", default=None,
                            help=".pkg 输出路径（默认 outputs/deploy/poisonguard-<域>.pkg）")
@@ -1088,6 +1093,8 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--quantize", default="none",
                            choices=["none", "f16", "i8"],
                            help="kNN 参考向量量化（none/f16/i8），压缩发布物体积")
+            p.add_argument("--sign-ed25519", dest="sign_ed25519", default=None,
+                           help="用 ed25519 作者私钥签名（keygen 生成的 .key）")
             p.add_argument("--sign-key", default=None,
                            help="HMAC 签名密钥（也可用环境变量 POISONGUARD_PKG_KEY）")
             p.add_argument("--sign-key-file", default=None,
@@ -1110,6 +1117,8 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--no-html", action="store_true", help="不生成 HTML 报告")
             p.add_argument("--domain", default="",
                            help="processed 目录后缀(如 afqmc/iflytek)；空=默认 v3")
+            p.add_argument("--verify-ed25519", dest="verify_ed25519", default=None,
+                           help="用作者公钥(.pub)验证 ed25519 签名")
             p.add_argument("--sign-key", default=None,
                            help="校验 HMAC 签名的密钥（也可用环境变量 POISONGUARD_PKG_KEY）")
             p.add_argument("--sign-key-file", default=None,
@@ -1284,6 +1293,15 @@ def main(argv: list[str] | None = None) -> int:
         from .scan import cmd_scan
 
         cmd_scan(cfg, args)
+    elif args.cmd == "keygen":
+        from .deploy import generate_ed25519_keypair
+
+        priv, pub = generate_ed25519_keypair(
+            getattr(args, "keygen_dir", "outputs/keys") or "outputs/keys",
+            getattr(args, "name", "author") or "author")
+        print(f"[keygen] 私钥(仅作者持有, 0600): {priv}")
+        print(f"[keygen] 公钥(可分发, 部署方验证用): {pub}")
+        print("[keygen] 打包: deploy --sign-ed25519 <私钥>   验证: run --verify-ed25519 <公钥>")
     elif args.cmd == "deploy":
         from .deploy import cmd_deploy
 
