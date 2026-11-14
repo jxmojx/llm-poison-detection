@@ -750,6 +750,55 @@ def cmd_judge(cfg: Config, args) -> dict:
     return out
 
 
+def _feedback_clean_scores(cfg: Config, args):
+    """给 C4 找一套"与线上 score 同尺度"的 dev 干净分数。
+
+    优先级：
+    1. `--student pkl`：用学生模型现算（推荐——`ingest`/`run` 的 score 就是它的输出）；
+    2. 兜底：dev 分数缓存里的同名检测器（尺度可能与线上不一致，会在报告里标注）。
+    """
+    import numpy as np
+
+    from .conformal import suffix_of
+    from .data import load_splits
+
+    dev = load_splits(cfg.data.processed_dir).get("dev", [])
+    clean = [s for s in dev if s.label == 0 and s.family in ("normal", "hardneg")]
+
+    student_path = getattr(args, "student", None)
+    if student_path:
+        sp = Path(student_path)
+        if not sp.exists():
+            print(f"[feedback] 找不到学生模型 {sp}，改用分数缓存")
+        elif clean:
+            from .distill import JudgeStudent
+            from .encoders import get_encoder
+
+            print(f"[feedback] 用学生模型在 {len(clean)} 条 dev 干净样本上重算阈值…")
+            enc = get_encoder(cfg)
+            texts = [s.text for s in clean]
+            clean_scores = JudgeStudent.load(sp).score(texts, enc.encode(texts))
+            return clean_scores, "student"
+
+    try:
+        npz = np.load(Path(cfg.metrics_dir) / f"dev_scores{suffix_of(cfg)}.npz",
+                      allow_pickle=True)
+    except FileNotFoundError:
+        print("[feedback] 没有 dev 分数缓存（先跑 detect），跳过影子阈值")
+        return None, None
+    name = getattr(args, "detector", "sup_tfidf")
+    if name not in npz.files or not dev:
+        print(f"[feedback] 分数缓存里没有 {name}，跳过影子阈值")
+        return None, None
+    # 注意：分数缓存是整个 dev 的行数，mask 要按 dev 全量算，再取干净子集
+    mask = np.array([s.label == 0 and s.family in ("normal", "hardneg") for s in dev])
+    if len(mask) != len(npz[name]):
+        print(f"[feedback] dev 样本数 {len(mask)} 与分数行数 {len(npz[name])} 不一致，"
+              "跳过影子阈值")
+        return None, None
+    return npz[name][mask], name
+
+
 def cmd_report(cfg: Config, args) -> Path:
     def _read(name: str):
         p = _metrics_path(cfg, name)
@@ -952,6 +1001,8 @@ ARG_DEFAULTS = {
     "sign_key_file": None,
     "require_signature": False,
     "db": None, "host": "127.0.0.1", "port": 8077,
+    "target_fpr": 0.01, "detector": "sup_tfidf", "mode": "pooled",
+    "min_support": 30, "corpus_dir": "outputs/feedback", "report": "docs/运维日报.md",
     "inbox": "data/inbox", "files": [], "pattern": "*.txt,*.csv,*.tsv,*.jsonl,*.json",
     "fmt": "auto", "column": "text", "limit": 0, "watch_band": 0.05,
     "threshold": None, "bundle": None, "verify_ed25519": None,
@@ -981,6 +1032,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("ranker", "学生排序器(A5)：字符 n-gram / 句向量 / 混合 / PCA / MLP 受控对比"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("ingest", "入库钩子(C2)：投递目录 → 自动打分 → 隔离/人审/放行 + 判决台账"),
+        ("feedback", "误报闭环(C4)：人审判定 → 在线FPR/影子阈值/难负样本语料"),
         ("review", "人审台(C1)：BLOCK/WATCH 队列 → 判定 + 理由码落库"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
@@ -1064,6 +1116,21 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "redteam":
             p.add_argument("--rt-each", type=int, default=5,
                            help="每种注入载荷造几条文本")
+        if name == "feedback":
+            p.add_argument("--db", default="outputs/ingest/review.sqlite3",
+                           help="人审判决库（review 产出）")
+            p.add_argument("--student", default=None,
+                           help="学生模型 pkl；给了就用它在 dev 干净集上重算阈值（与线上 score 同尺度，推荐）")
+            p.add_argument("--detector", default="sup_tfidf",
+                           help="没给 --student 时的兜底：用 dev 分数缓存里同名检测器")
+            p.add_argument("--mode", default="pooled", choices=("pooled", "replace"),
+                           help="影子阈值模式：并进干净校准集 / 直接用误报样本")
+            p.add_argument("--min-support", dest="min_support", type=int, default=30,
+                           help="告警所需最小样本量")
+            p.add_argument("--corpus-dir", dest="corpus_dir", default="outputs/feedback",
+                           help="难负样本/确认正例的导出目录")
+            p.add_argument("--report", default="docs/运维日报.md",
+                           help="日报 markdown 输出路径")
         if name == "review":
             p.add_argument("--out-dir", dest="out_dir", default="outputs/ingest",
                            help="ingest 产物目录（读 quarantine/ 与 review/）")
@@ -1336,6 +1403,30 @@ def main(argv: list[str] | None = None) -> int:
                          with_judge=bool(getattr(args, "with_judge", False)),
                          seed=int(getattr(args, "attack_seed", 42) or 42),
                          out_path=_metrics_path(cfg, f"strongattack_{_m}.json"))
+    elif args.cmd == "feedback":
+        from .data import load_splits
+        from .feedback import run_feedback
+
+        clean_scores, score_source = _feedback_clean_scores(cfg, args)
+        if score_source and score_source != "student":
+            print(f"[feedback] ⚠ 阈值尺度是 {score_source}，但线上 score 通常来自部署打分器"
+                  "（学生模型）——尺度可能不可比，建议加 --student <pkl>")
+
+        res = run_feedback(
+            getattr(args, "db", "outputs/ingest/review.sqlite3"),
+            out_path=_metrics_path(cfg, "feedback.json"),
+            clean_scores=clean_scores,
+            score_source=score_source,
+            target_fpr=float(getattr(args, "target_fpr", None) or cfg.detector.target_fpr),
+            mode=getattr(args, "mode", "pooled"),
+            min_support=int(getattr(args, "min_support", 30) or 30),
+            corpus_dir=getattr(args, "corpus_dir", "outputs/feedback"),
+            report_path=getattr(args, "report", "docs/运维日报.md"),
+        )
+        r = res["fp_rate"]
+        print(f"[feedback] 已判 {res['n_decided']} 条：误报 {r['n_fp']}/{r['n_blocked']} "
+              f"= {r['fp_rate']:.2%}  告警={res['alarm']['status']}")
+        print(f"[feedback] {res['alarm']['message']}")
     elif args.cmd == "review":
         from .review import create_review_app
 

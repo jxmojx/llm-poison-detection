@@ -15,6 +15,7 @@ help:
 	@echo "make smoke         端到端烟测(tiny 编码器, 零下载, ~25s)"
 	@echo "make ingest        入库门禁(C2): 扫 data/inbox → 隔离/人审/放行 + 台账"
 	@echo "make review        人审台(C1): 浏览器 http://127.0.0.1:8077"
+	@echo "make feedback      误报闭环(C4): 在线FPR + 影子阈值 + 难负样本"
 	@echo "make attack-study  强攻击压测: 零宽/同形/全角/回译/GCG(A3)"
 	@echo "make serve    起在线打分服务"
 	@echo "make test     单元测试"
@@ -61,6 +62,9 @@ ingest:
 
 review:
 	$(PY) -m poisonguard.cli review --out-dir outputs/ingest --port 8077
+
+feedback:
+	$(PY) -m poisonguard.cli feedback $(V3)
 
 attack-study:
 	$(PY) -m poisonguard.cli attack-study $(V3) --method mix --qwen-model 0.5b

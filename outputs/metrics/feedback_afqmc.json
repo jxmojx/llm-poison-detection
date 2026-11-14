@@ -1,0 +1,73 @@
+{
+  "db": "outputs/ingest/review.sqlite3",
+  "target_fpr": 0.01,
+  "score_source": "student",
+  "n_records": 5,
+  "n_decided": 5,
+  "fp_rate": {
+    "n_blocked": 5,
+    "n_fp": 3,
+    "fp_rate": 0.6,
+    "ci95": [
+      0.23071993220883708,
+      0.8823817688407467
+    ],
+    "n_poison": 1,
+    "n_unsure": 1,
+    "n_pending": 0
+  },
+  "alarm": {
+    "status": "insufficient",
+    "alarm": false,
+    "message": "样本不足（5/30），不下结论"
+  },
+  "daily": [
+    {
+      "day": "2026-11-15",
+      "n_blocked": 5,
+      "n_fp": 3,
+      "n_poison": 1,
+      "fp_rate": 0.6
+    }
+  ],
+  "corpora": {
+    "hardneg": {
+      "n": 2,
+      "path": "outputs\\feedback\\hardneg_feedback.jsonl"
+    },
+    "confirmed_poison": {
+      "n": 1,
+      "path": "outputs\\feedback\\confirmed_poison.jsonl"
+    }
+  },
+  "shadow": {
+    "mode": "pooled",
+    "ref_used": "pooled",
+    "target_fpr": 0.01,
+    "n_clean": 2969,
+    "n_fp": 2,
+    "old_threshold": 0.9980642898104137,
+    "new_threshold": 0.9980642898104137,
+    "delta": 0.0,
+    "achieved_fpr_old": 0.010104412260020209,
+    "achieved_fpr_new": 0.010097610232245036,
+    "fp_still_blocked": 0,
+    "fp_blocked_before": 0,
+    "interpretation": "换成校准阈值后，2 条误报里有 2 条会被放过；是否切换要看 hold-out 上的召回代价（低召回本来就紧）。",
+    "online_threshold": 0.5,
+    "fp_blocked_online": 2,
+    "threshold_gap": 0.49806428981041373
+  },
+  "replay": {
+    "n_reviewed": 5,
+    "n_flag_changes": 5,
+    "dropped_by_decision": {
+      "benign": 3,
+      "poison": 1,
+      "unsure": 1
+    },
+    "from_threshold": 0.5,
+    "to_threshold": 0.9980642898104137,
+    "note": "仅为离线回放，未改动线上任何配置"
+  }
+}
