@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "limit": 400,
+    "n_dev_clean": 400,
+    "n_test": 2953,
+    "seed": 42,
+    "seconds": 561.1,
+    "note": "分数= -数字位置平均对数概率（越大越可疑）；只在含数字样本上评"
+  },
+  "overall": {
+    "auroc": 0.35301362463613933,
+    "tpr_at_fpr1": 0.0005589714924538849,
+    "n_evaluated": 2502,
+    "coverage": 0.8472739586860819
+  },
+  "by_family": {
+    "backdoor": {
+      "n": 400,
+      "n_with_number": 400,
+      "coverage": 1.0,
+      "mean_susp": 5.659441566045862
+    },
+    "edit": {
+      "n": 400,
+      "n_with_number": 381,
+      "coverage": 0.9525,
+      "mean_susp": 4.814250803807399
+    },
+    "hardneg": {
+      "n": 153,
+      "n_with_number": 127,
+      "coverage": 0.8300653594771242,
+      "mean_susp": 6.02489899028474
+    },
+    "normal": {
+      "n": 400,
+      "n_with_number": 288,
+      "coverage": 0.72,
+      "mean_susp": 5.342888632234665
+    },
+    "ood": {
+      "n": 400,
+      "n_with_number": 298,
+      "coverage": 0.745,
+      "mean_susp": 8.56539071086269
+    },
+    "paraphrase": {
+      "n": 400,
+      "n_with_number": 284,
+      "coverage": 0.71,
+      "mean_susp": 6.344815714048668
+    },
+    "subtle": {
+      "n": 400,
+      "n_with_number": 400,
+      "coverage": 1.0,
+      "mean_susp": 3.737264250740409
+    },
+    "template": {
+      "n": 400,
+      "n_with_number": 324,
+      "coverage": 0.81,
+      "mean_susp": 5.71894923866623
+    }
+  },
+  "fusion_with_sup_tfidf": null
+}

@@ -1000,6 +1000,7 @@ ARG_DEFAULTS = {
     "sign_key": None,
     "sign_key_file": None,
     "require_signature": False,
+    "fact_model": "Qwen/Qwen2.5-0.5B-Instruct", "fact_limit": 400, "fact_seed": 42,
     "calibrate": True, "db": None, "host": "127.0.0.1", "port": 8077,
     "target_fpr": 0.01, "detector": "sup_tfidf", "mode": "pooled",
     "min_support": 30, "corpus_dir": "outputs/feedback", "report": "docs/运维日报.md",
@@ -1032,6 +1033,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("ranker", "学生排序器(A5)：字符 n-gram / 句向量 / 混合 / PCA / MLP 受控对比"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("ingest", "入库钩子(C2)：投递目录 → 自动打分 → 隔离/人审/放行 + 判决台账"),
+        ("factcheck", "数字级事实校验(P0-2)：数字位置的模型先验 → 抓内容级篡改"),
         ("feedback", "误报闭环(C4)：人审判定 → 在线FPR/影子阈值/难负样本语料"),
         ("review", "人审台(C1)：BLOCK/WATCH 队列 → 判定 + 理由码落库"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
@@ -1116,6 +1118,12 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "redteam":
             p.add_argument("--rt-each", type=int, default=5,
                            help="每种注入载荷造几条文本")
+        if name == "factcheck":
+            p.add_argument("--fact-model", dest="fact_model", default="Qwen/Qwen2.5-0.5B-Instruct",
+                           help="做数字先验的因果 LM（默认 0.5B，CPU 可跑）")
+            p.add_argument("--fact-limit", dest="fact_limit", type=int, default=400,
+                           help="每个家族抽样条数(0=全量；全量约 20-25 分钟)")
+            p.add_argument("--fact-seed", dest="fact_seed", type=int, default=42)
         if name == "feedback":
             p.add_argument("--db", default="outputs/ingest/review.sqlite3",
                            help="人审判决库（review 产出）")
@@ -1409,6 +1417,13 @@ def main(argv: list[str] | None = None) -> int:
                          with_judge=bool(getattr(args, "with_judge", False)),
                          seed=int(getattr(args, "attack_seed", 42) or 42),
                          out_path=_metrics_path(cfg, f"strongattack_{_m}.json"))
+    elif args.cmd == "factcheck":
+        from .factcheck import run_factcheck
+
+        run_factcheck(cfg, out_path=_metrics_path(cfg, "factcheck.json"),
+                      model_id=getattr(args, "fact_model", None),
+                      limit=int(getattr(args, "fact_limit", 0) or 0),
+                      seed=int(getattr(args, "fact_seed", 42) or 42))
     elif args.cmd == "feedback":
         from .data import load_splits
         from .feedback import run_feedback
