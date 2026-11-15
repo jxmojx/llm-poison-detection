@@ -28,7 +28,7 @@ REASONS: dict[str, list[str]] = {
     "benign": ["错别字/OCR", "口语闲聊", "领域不匹配", "正常新闻", "长文本/截断", "其他"],
     "unsure": ["证据不足", "需要外部事实核查", "其他"],
 }
-_FLAG_DIRS = {"BLOCK": "quarantine", "WATCH": "review"}
+_FLAG_DIRS = {"BLOCK": "quarantine", "WATCH": "review", "PASS": "released"}
 
 
 def item_key(rec: dict) -> str:
@@ -39,10 +39,32 @@ def item_key(rec: dict) -> str:
 # ----------------------------------------------------------------------
 # 队列（读 ingest 落盘的 jsonl）
 # ----------------------------------------------------------------------
+def _sample_pass(items: list[dict], n: int, seed: int = 42) -> list[dict]:
+    """对放行流做**确定性**抽样：按 (key, seed) 的哈希排序取前 n 条。
+
+    确定性很重要——同一个人明天再抽、或换个评审员来抽，抽到的是同一批，
+    否则"漏报率"会变成抽签结果。
+    """
+    if n <= 0 or not items:
+        return []
+    import hashlib
+
+    def rank(rec: dict) -> bytes:
+        return hashlib.blake2b(f"{seed}|{rec.get('key', '')}".encode(),
+                               digest_size=8).digest()
+
+    return sorted(items, key=rank)[:n]
+
+
 def load_items(out_dir: str | Path, *, flags: tuple[str, ...] = ("BLOCK", "WATCH"),
                limit: int = 0, offset: int = 0,
-               decided: set[str] | None = None) -> list[dict]:
-    """读队列并按分数从高到低排；`decided` 里的条目会被过滤掉（已判过）。"""
+               decided: set[str] | None = None,
+               sample_pass: int = 0, seed: int = 42) -> list[dict]:
+    """读队列并按分数从高到低排；`decided` 里的条目会被过滤掉（已判过）。
+
+    `sample_pass>0` 时把放行流（PASS）也纳入，并只取确定性的 N 条抽样——
+    这是估计**漏报率**的唯一途径（不抽 PASS，就永远只知道拦截精度）。
+    """
     out = Path(out_dir)
     seen: set[str] = set()
     items: list[dict] = []
@@ -65,6 +87,10 @@ def load_items(out_dir: str | Path, *, flags: tuple[str, ...] = ("BLOCK", "WATCH
                 seen.add(k)
                 rec["key"] = k
                 items.append(rec)
+    if sample_pass and "PASS" in flags:
+        keep = [r for r in items if r.get("flag") == "PASS"]
+        sampled = _sample_pass(keep, sample_pass, seed)
+        items = [r for r in items if r.get("flag") != "PASS"] + sampled
     items.sort(key=lambda r: float(r.get("score", 0.0)), reverse=True)
     if offset:
         items = items[offset:]
@@ -145,7 +171,19 @@ class ReviewStore:
             by_reason = dict(c.execute(
                 "SELECT reason, COUNT(*) FROM decisions WHERE reason<>''"
                 " GROUP BY reason ORDER BY COUNT(*) DESC").fetchall())
+            pass_rows = c.execute(
+                "SELECT flag, decision, COUNT(*) FROM decisions"
+                " WHERE flag='PASS' GROUP BY decision").fetchall()
+        n_pass = sum(r[2] for r in pass_rows)
+        n_miss = sum(r[2] for r in pass_rows if r[1] == "poison")
+        from .feedback import wilson_interval
+
+        miss_rate = (n_miss / n_pass) if n_pass else None
         return {"total": sum(by_dec.values()),
+                "pass_reviewed": n_pass,
+                "miss": n_miss,
+                "miss_rate": miss_rate,
+                "miss_rate_ci95": wilson_interval(n_miss, n_pass) if n_pass else None,
                 "by_decision": {d: by_dec.get(d, 0) for d in DECISIONS},
                 "by_reason": by_reason}
 
@@ -173,7 +211,8 @@ class ReviewStore:
 # ----------------------------------------------------------------------
 def create_review_app(out_dir: str | Path = "outputs/ingest",
                       db_path: str | Path | None = None,
-                      *, title: str = "poisonguard 人审台"):
+                      *, title: str = "poisonguard 人审台",
+                      sample_pass: int = 0, seed: int = 42):
     """返回 FastAPI 应用。真实部署时挂在内网，别暴露公网（无鉴权）。"""
     from fastapi import FastAPI
     from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -181,6 +220,7 @@ def create_review_app(out_dir: str | Path = "outputs/ingest",
 
     out = Path(out_dir)
     store = ReviewStore(db_path or (out / "review.sqlite3"))
+    default_pass = int(sample_pass)
 
     class DecisionIn(BaseModel):
         key: str
@@ -197,11 +237,18 @@ def create_review_app(out_dir: str | Path = "outputs/ingest",
         return _PAGE.replace("__TITLE__", title).replace("__OUT__", str(out))
 
     @app.get("/api/queue")
-    def queue(flag: str = "", limit: int = 50, offset: int = 0) -> dict:
+    def queue(flag: str = "", limit: int = 50, offset: int = 0,
+              sample_pass: int = 0) -> dict:
         flags = (flag,) if flag in _FLAG_DIRS else tuple(_FLAG_DIRS)
+        if sample_pass and "PASS" not in flags and not flag:
+            flags = flags + ("PASS",)
         items = load_items(out, flags=flags, limit=limit, offset=offset,
-                           decided=store.decided_keys())
-        total = len(load_items(out, flags=flags, decided=store.decided_keys()))
+                           decided=store.decided_keys(),
+                           sample_pass=int(sample_pass) or default_pass,
+                           seed=seed)
+        total = len(load_items(out, flags=flags, decided=store.decided_keys(),
+                               sample_pass=int(sample_pass) or default_pass,
+                               seed=seed))
         return {"items": items, "total": total, "offset": offset,
                 "stats": store.stats(),
                 "reasons": REASONS, "decisions": list(DECISIONS)}

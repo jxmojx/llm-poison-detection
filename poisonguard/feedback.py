@@ -125,12 +125,20 @@ def fp_rate(records: list[dict]) -> dict:
     fp = [r for r in blocked if r.get("decision") == "benign"]
     k, n = len(fp), len(blocked)
     lo, hi = wilson_interval(k, n)
+    # P0-3：放行流的抽样审计 —— 这是唯一能估「漏报率」的数
+    passed = [r for r in records if r.get("flag") == "PASS"]
+    miss = [r for r in passed if r.get("decision") == "poison"]
+    mlo, mhi = wilson_interval(len(miss), len(passed))
     return {"n_blocked": n, "n_fp": k,
             "fp_rate": (k / n) if n else 0.0,
             "ci95": [lo, hi],
             "n_poison": sum(1 for r in blocked if r.get("decision") == "poison"),
             "n_unsure": sum(1 for r in blocked if r.get("decision") == "unsure"),
-            "n_pending": sum(1 for r in blocked if not r.get("decision"))}
+            "n_pending": sum(1 for r in blocked if not r.get("decision")),
+            "pass_reviewed": len(passed),
+            "n_miss": len(miss),
+            "miss_rate": (len(miss) / len(passed)) if passed else None,
+            "miss_rate_ci95": [mlo, mhi] if passed else None}
 
 
 def drift_alarm(rate: dict, target_fpr: float, *, min_support: int = 30) -> dict:
@@ -263,10 +271,20 @@ def build_report(result: dict) -> str:
         f"95% Wilson 区间 [{rate['ci95'][0]:.2%}, {rate['ci95'][1]:.2%}]",
         f"- 告警状态：**{alarm['status']}** —— {alarm['message']}",
         "",
-        "> 注意口径：这里只统计**被拦下来**的样本。系统放过的样本没人审，"
-        "所以这是「拦截精度」而不是「漏报率」——要估漏报必须对 PASS 队列抽样送审。",
+        "> 注意口径：这里只统计**被拦下来**的样本，是「拦截精度」；"
+        "用 `review --sample-pass N` 抽放行的样送审，才能估「漏报率」。",
         "",
     ]
+    if rate.get("pass_reviewed"):
+        lo3, hi3 = rate["miss_rate_ci95"]
+        lines += [
+            f"## 1b. 漏报估计（PASS 抽样审计，n={rate['pass_reviewed']}）",
+            "",
+            f"- 抽审放行样本 **{rate['pass_reviewed']}** 条，其中人审判为有毒 **{rate['n_miss']}** 条"
+            f" → 漏报率 **{rate['miss_rate']:.2%}**，95% Wilson 区间 [{lo3:.2%}, {hi3:.2%}]",
+            "- 这是**抽样估计**（不是全量），区间宽度取决于抽样条数；样本 <30 时只当趋势看。",
+            "",
+        ]
     if shift:
         lines += [
             "## 2. 影子阈值（只建议，不生效）",

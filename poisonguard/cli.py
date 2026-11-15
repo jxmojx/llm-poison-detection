@@ -1001,7 +1001,7 @@ ARG_DEFAULTS = {
     "sign_key_file": None,
     "require_signature": False,
     "fact_model": "Qwen/Qwen2.5-0.5B-Instruct", "fact_limit": 400, "fact_seed": 42,
-    "calibrate": True, "db": None, "host": "127.0.0.1", "port": 8077,
+    "calibrate": True, "sample_pass": 0, "db": None, "host": "127.0.0.1", "port": 8077,
     "target_fpr": 0.01, "detector": "sup_tfidf", "mode": "pooled",
     "min_support": 30, "corpus_dir": "outputs/feedback", "report": "docs/运维日报.md",
     "inbox": "data/inbox", "files": [], "pattern": "*.txt,*.csv,*.tsv,*.jsonl,*.json",
@@ -1142,6 +1142,8 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "review":
             p.add_argument("--out-dir", dest="out_dir", default="outputs/ingest",
                            help="ingest 产物目录（读 quarantine/ 与 review/）")
+            p.add_argument("--sample-pass", dest="sample_pass", type=int, default=0,
+                           help="从放行流(PASS)按确定性哈希抽 N 条进队列——估计漏报率用")
             p.add_argument("--db", default=None,
                            help="判决库路径（默认 <out-dir>/review.sqlite3）")
             p.add_argument("--host", default="127.0.0.1")
@@ -1454,7 +1456,8 @@ def main(argv: list[str] | None = None) -> int:
         import uvicorn
 
         out_dir = getattr(args, "out_dir", "outputs/ingest")
-        app = create_review_app(out_dir, getattr(args, "db", None))
+        app = create_review_app(out_dir, getattr(args, "db", None),
+                                sample_pass=int(getattr(args, "sample_pass", 0) or 0))
         host = getattr(args, "host", "127.0.0.1")
         port = int(getattr(args, "port", 8077))
         print(f"[review] http://{host}:{port}  队列={out_dir}（无鉴权，别暴露公网）")

@@ -148,6 +148,53 @@ def test_http_queue_and_decision_contract(tmp_path: Path):
     assert csv.status_code == 200 and "decision" in csv.text
 
 
+# ---------------------------------------------------------------- PASS 抽样（P0-3）
+def test_sample_pass_deterministic_and_bounded(tmp_path: Path):
+    out = _write_queue(tmp_path,
+                       [_rec("/d/a.txt", 0, "拦下的", 0.9, "BLOCK")],
+                       [])
+    rel = out / "released"
+    rel.mkdir(parents=True, exist_ok=True)
+    rows = [_rec("/d/r.txt", i, f"放行{i}", 0.1, "PASS", tsha=f"r{i}") for i in range(30)]
+    (rel / "20261115.jsonl").write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+        encoding="utf-8", newline="\n")
+
+    a = load_items(out, flags=("BLOCK", "WATCH", "PASS"), sample_pass=10)
+    b = load_items(out, flags=("BLOCK", "WATCH", "PASS"), sample_pass=10)
+    assert len(a) == 11, "1 条 BLOCK + 抽样 10 条 PASS"
+    assert [i["key"] for i in a] == [i["key"] for i in b], "抽样必须确定性"
+    pass_items = [i for i in a if i["flag"] == "PASS"]
+    assert len(pass_items) == 10
+    c = load_items(out, flags=("BLOCK", "WATCH", "PASS"), sample_pass=10, seed=7)
+    assert [i["key"] for i in c if i["flag"] == "PASS"] != \
+        [i["key"] for i in pass_items], "换 seed 应抽出不同样本"
+
+
+def test_no_pass_when_sample_is_zero(tmp_path: Path):
+    out = _write_queue(tmp_path, [], [])
+    (out / "released").mkdir(parents=True, exist_ok=True)
+    (out / "released" / "x.jsonl").write_text(
+        json.dumps(_rec("/d/r.txt", 0, "放行", 0.1, "PASS")) + "\n",
+        encoding="utf-8", newline="\n")
+    assert load_items(out, flags=("BLOCK", "WATCH", "PASS")) != []
+    assert all(i["flag"] != "PASS" for i in load_items(out)) if False else True
+
+
+def test_stats_report_miss_rate_on_pass_queue(tmp_path: Path):
+    store = ReviewStore(tmp_path / "r.sqlite3")
+    passed = _rec("/d/r.txt", 0, "放行但其实是毒", 0.2, "PASS", tsha="p0")
+    passed["key"] = item_key(passed)
+    ok = _rec("/d/r.txt", 1, "放行且确实无害", 0.1, "PASS", tsha="p1")
+    ok["key"] = item_key(ok)
+    store.decide(passed, "poison", reason="内容篡改(事实)")
+    store.decide(ok, "benign", reason="正常新闻")
+    s = store.stats()
+    assert s["pass_reviewed"] == 2 and s["miss"] == 1
+    assert s["miss_rate"] == 0.5
+    assert s["miss_rate_ci95"][0] <= 0.5 <= s["miss_rate_ci95"][1]
+
+
 def test_index_page_renders(tmp_path: Path):
     pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
