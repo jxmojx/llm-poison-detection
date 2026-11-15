@@ -168,12 +168,13 @@ def scan_file(cfg: Config, input_path: str | Path, *,
     if scorer is not None:
         scoring = scorer
     else:
-        if threshold is not None:
-            cfg.detector.target_fpr = float(threshold)
         scoring = build_scorer(cfg, student_path=_default_student(cfg))
-        if threshold is not None:
-            # task 阈值：用户显式覆盖；否则用 scoring 的默认（训练侧标定）
-            scoring.threshold = float(threshold)
+        # P0-1 阈值口径：显式 --threshold > dev 干净集标定 > 打分器默认
+        from .threshold import describe, resolve_threshold
+
+        res = resolve_threshold(scoring, cfg, override=threshold, calibrate=True)
+        scoring.threshold = float(res["threshold"])
+        print(f"[scan] 阈值口径：{describe(res)}")
 
     # 域漂移提示：输入 vs 训练侧 dev 的平均长度差
     dev_lens: list[int] = []

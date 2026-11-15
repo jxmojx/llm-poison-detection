@@ -34,8 +34,18 @@ def _build_ingest_scorer(cfg: Config, args):
         return sc, pkg_sha
 
     from .service import _default_student, build_scorer
+    from .threshold import describe, resolve_threshold
 
     sc = build_scorer(cfg, student_path=_default_student(cfg))
+    # P0-1：本地打分器的阈值也要标定，否则和 deploy/run 的口径不一致
+    res = resolve_threshold(sc, cfg,
+                            override=getattr(args, "threshold", None),
+                            calibrate=bool(getattr(args, "calibrate", True)))
+    if res["source"] == "calibrated":
+        sc.threshold = res["threshold"]
+    elif res["source"] == "cli_override":
+        sc.threshold = res["threshold"]
+    print(f"[ingest] 阈值口径：{describe(res)}")
     return sc, ""
 
 

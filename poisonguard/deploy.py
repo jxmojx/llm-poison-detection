@@ -401,11 +401,38 @@ def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
                   student_path: str | Path | None = None,
                   threshold: float | None = None,
                   quantize: str = "none",
-                  sign_key: str | None = None) -> Path:
-    """作者侧：装配该域打分器 → 提取拟合态 → 落单文件 .pkg。"""
+                  sign_key: str | None = None,
+                  calibrate: bool = True) -> Path:
+    """作者侧：装配该域打分器 → 提取拟合态 → 落单文件 .pkg。
+
+    阈值口径（P0-1）：默认在 dev 干净样本上标定 1% 工作点，写进 manifest；
+    `threshold` 显式给了就以它为准（人工覆盖）；`calibrate=False` 则沿用
+    打分器自带阈值（与标定口径可能不一致，只建议 debug 用）。
+    """
+    from .threshold import clean_dev_texts, calibrate_threshold
+
     scorer = build_scorer(cfg, student_path=_student_path_for(cfg, student_path))
+    threshold_source = "scorer_default"
+    calib: dict | None = None
     if threshold is not None:
         scorer.threshold = float(threshold)
+        threshold_source = "cli_override"
+        print(f"[deploy] 阈值 {scorer.threshold:.4f}：命令行显式覆盖（非标定值）")
+    elif calibrate:
+        try:
+            texts = clean_dev_texts(cfg)
+        except Exception as exc:  # 没有 processed 目录时退回默认阈值
+            print(f"[deploy] 警告: 取不到 dev 干净样本({exc})，跳过阈值标定")
+            texts = []
+        if texts:
+            calib = calibrate_threshold(scorer, texts, cfg.detector.target_fpr)
+            scorer.threshold = calib["threshold"]
+            threshold_source = "calibrated"
+            print(f"[deploy] 阈值 {scorer.threshold:.4f}：在 {calib['n_clean']} 条 dev "
+                  f"干净样本上标定（目标 FPR {cfg.detector.target_fpr:.2%}，"
+                  f"实测 {calib['achieved_fpr']:.2%}）")
+    else:
+        print(f"[deploy] 阈值 {scorer.threshold:.4f}：打分器默认值（未标定）")
 
     domain = _domain_tag(cfg)
     state = DeployState(
@@ -459,6 +486,8 @@ def bundle_scorer(cfg: Config, out_path: str | Path | None = None,
             "quantize": state.provenance.get("quantize", "none"),
             "knn_refs": state.provenance.get("knn_refs", 0),
             "threshold": state.threshold,
+            "threshold_source": threshold_source,
+            "threshold_calibrated": calib,
             "judge_threshold": state.judge_threshold,
             "created": state.provenance.get("created"),
             "encoder_fingerprint": fp,
@@ -565,6 +594,8 @@ def load_bundle(path: str | Path, cfg: Config | None = None,
                 "（同名的不同权重会让 kNN/学生全部失真，拒绝加载）")
     sc = DeployedScorer(state, enc)
     quant = manifest.get("quantize") or state.provenance.get("quantize", "none")
+    thr_src = manifest.get("threshold_source") or "scorer_default"
+    print(f"[run] 阈值 {sc.threshold:.4f}（来源 {thr_src}）")
     print(f"[run] 发布物校验通过: domain={manifest.get('domain') or state.domain} "
           f"quantize={quant} "
           f"sha256={(digest[:16] + '…') if digest else '(legacy, 无校验)'} "
@@ -579,6 +610,7 @@ def cmd_deploy(cfg: Config, args: argparse.Namespace) -> Path:
         cfg, out_path=getattr(args, "out", None),
         student_path=getattr(args, "student", None),
         threshold=getattr(args, "threshold", None),
+        calibrate=bool(getattr(args, "calibrate", True)),
         quantize=getattr(args, "quantize", "none") or "none",
         sign_key=_resolve_sign_key(getattr(args, "sign_key", None),
                                    getattr(args, "sign_key_file", None)),

@@ -1000,7 +1000,7 @@ ARG_DEFAULTS = {
     "sign_key": None,
     "sign_key_file": None,
     "require_signature": False,
-    "db": None, "host": "127.0.0.1", "port": 8077,
+    "calibrate": True, "db": None, "host": "127.0.0.1", "port": 8077,
     "target_fpr": 0.01, "detector": "sup_tfidf", "mode": "pooled",
     "min_support": 30, "corpus_dir": "outputs/feedback", "report": "docs/运维日报.md",
     "inbox": "data/inbox", "files": [], "pattern": "*.txt,*.csv,*.tsv,*.jsonl,*.json",
@@ -1143,6 +1143,9 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--port", type=int, default=8000)
             p.add_argument("--student", default=None, help="学生模型 pkl 路径")
         if name == "ingest":
+            p.add_argument("--calibrate", action=argparse.BooleanOptionalAction,
+                           default=True,
+                           help="本地打分器启动时标定 1%% 阈值（默认开；--bundle 模式读包内阈值）")
             p.add_argument("--inbox", default="data/inbox",
                            help="投递目录：新落地的 txt/csv/jsonl 会被自动处理")
             p.add_argument("--file", dest="files", action="append", default=[],
@@ -1198,6 +1201,9 @@ def build_parser() -> argparse.ArgumentParser:
                            help="密钥输出目录(默认 outputs/keys)")
             p.add_argument("--name", default="author", help="密钥名(默认 author)")
         if name == "deploy":
+            p.add_argument("--calibrate", action=argparse.BooleanOptionalAction,
+                           default=True,
+                           help="在 dev 干净样本上标定 1%% 阈值写进 manifest（默认开）")
             p.add_argument("--out", default=None,
                            help=".pkg 输出路径（默认 outputs/deploy/poisonguard-<域>.pkg）")
             p.add_argument("--student", default=None,

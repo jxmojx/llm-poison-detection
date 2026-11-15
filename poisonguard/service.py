@@ -201,7 +201,17 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
         if "s" not in state:
             with _build_lock:
                 if "s" not in state:
-                    state["s"] = build_scorer(cfg, student_path=_student())
+                    sc = build_scorer(cfg, student_path=_student())
+                    # P0-1：阈值口径统一（dev 干净集 1% 工作点），否则线上=0.5
+                    try:
+                        from .threshold import describe, resolve_threshold
+
+                        res = resolve_threshold(sc, cfg, calibrate=True)
+                        sc.threshold = float(res["threshold"])
+                        print(f"[serve] 阈值口径：{describe(res)}")
+                    except Exception as exc:  # 没有 processed 目录时保持默认
+                        print(f"[serve] 警告: 阈值标定跳过({exc})")
+                    state["s"] = sc
         return state["s"]
 
     @app.get("/health")
