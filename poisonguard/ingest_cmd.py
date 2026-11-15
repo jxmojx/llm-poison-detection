@@ -6,11 +6,16 @@
 
 from __future__ import annotations
 
+import logging
+
 import json
 import time
 from pathlib import Path
 
 from .config import Config
+from .log import event, get_logger
+
+LOG = get_logger("ingest")
 from .ingest import Ingestor
 
 
@@ -75,10 +80,16 @@ def cmd_ingest(cfg: Config, args) -> dict:
                 print(f"[ingest] {r['path']} -> {r['n']} 条 "
                       f"BLOCK {r['block']} / WATCH {r['watch']} / PASS {r['pass']} "
                       f"（{r['seconds']}s, 新入账 {r.get('records_added', 0)}）")
+                event(LOG, "ingest.done", path=r["path"], n=r["n"],
+                      block=r["block"], watch=r["watch"], passed=r["pass"],
+                      ms=int(r["seconds"] * 1000))
             elif r["status"] == "skipped":
                 print(f"[ingest] {r['path']} -> 跳过（{r['reason']}）")
+                event(LOG, "ingest.skipped", path=r["path"], reason=r["reason"])
             else:
                 print(f"[ingest] {r['path']} -> {r['status']}: {r.get('error', '')}")
+                event(LOG, "ingest.error", level=logging.WARNING,
+                      path=r["path"], err=str(r.get("error", ""))[:200])
 
     if files:
         _report([ing.ingest_file(f, **kwargs) for f in files])

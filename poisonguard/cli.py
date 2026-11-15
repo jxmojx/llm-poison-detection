@@ -944,6 +944,10 @@ def _add_common(p: argparse.ArgumentParser, with_encoder: bool = True) -> None:
     if with_encoder:
         p.add_argument("--encoder", default=None, help="覆盖编码器: crom/bge/qwen3")
     p.add_argument("--target-fpr", type=float, default=None, help="阈值校准目标误报率")
+    p.add_argument("--log-level", dest="log_level", default=None,
+                   help="日志级别 DEBUG/INFO/WARNING（也可用 POISONGUARD_LOG_LEVEL）")
+    p.add_argument("--log-json", dest="log_json", action="store_true",
+                   help="日志输出单行 JSON（便于 Loki/ES 采集）")
     p.add_argument("--device", default=None, help="cpu/cuda/auto")
     p.add_argument("--edit", action="store_true",
                    help="启用 edit 攻击家族(真实新闻上做最小事实篡改)")
@@ -1288,6 +1292,10 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = build_parser()
     args = ap.parse_args(argv)
+    from . import log as _log
+
+    _log.setup(level=getattr(args, "log_level", None) or "INFO",
+               json_mode=bool(getattr(args, "log_json", False)))
     for k, v in ARG_DEFAULTS.items():
         if not hasattr(args, k):
             setattr(args, k, v)

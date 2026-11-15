@@ -81,5 +81,11 @@ serve:
 test:
 	$(PY) -m pytest tests/ -q
 
+cov:
+	$(PY) -m pytest tests/ -q --cov=poisonguard --cov-report=term-missing
+
+docker:
+	docker build -t poisonguard:latest .
+
 doctor:
 	$(PY) -m poisonguard.cli doctor

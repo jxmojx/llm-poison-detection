@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import argparse
@@ -34,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .log import event, get_logger
 from .config import Config, load_config
 from .detectors import KNNDetector, Calibration, CharNgramDetector
 from .encoders import get_encoder
@@ -177,6 +179,9 @@ def _default_student(cfg: Config) -> Path | None:
     return None
 
 
+LOG = get_logger("service")
+
+
 def create_app(cfg: Config | None = None, student_path: str | Path | None = None,
                scorer: PoisonScorer | None = None):
     """构造 FastAPI 应用（拆出来是为了测试可以注入现成的 scorer）。"""
@@ -234,7 +239,18 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
             raise HTTPException(status_code=400, detail="texts 不能为空")
         if len(req.texts) > MAX_BATCH:
             raise HTTPException(status_code=413, detail=f"单次最多 {MAX_BATCH} 条")
-        return _scorer().score(req.texts, explain=req.explain)
+        t0 = time.perf_counter()
+        try:
+            res = _scorer().score(req.texts, explain=req.explain)
+        except Exception as exc:  # 记下来再抛，否则线上排障只能靠猜
+            event(LOG, "score.error", level=logging.ERROR,
+                  n=len(req.texts), err=type(exc).__name__)
+            raise
+        n_flag = sum(1 for r in res.get("results", []) if r.get("flag"))
+        event(LOG, "score.request", n=len(req.texts), n_flag=n_flag,
+              ms=round((time.perf_counter() - t0) * 1000, 1),
+              threshold=res.get("threshold"))
+        return res
 
     @app.get("/stats")
     def stats() -> dict:

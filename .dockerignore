@@ -1,0 +1,15 @@
+# 大件与本地状态不进构建上下文
+.git
+.venv
+model_cache/
+outputs/
+data/raw/
+data/processed*/
+docs/实验报告*.md
+*.pkl
+*.npz
+*.pkg
+.acc_*
+.ci_*
+__pycache__/
+*.pyc

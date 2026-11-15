@@ -22,6 +22,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from .log import event, get_logger
+
 DECISIONS = ("poison", "benign", "unsure")
 REASONS: dict[str, list[str]] = {
     "poison": ["内容篡改(事实)", "模板投毒", "回译改写", "后门/触发词", "其他"],
@@ -209,6 +211,9 @@ class ReviewStore:
 # ----------------------------------------------------------------------
 # HTTP 应用
 # ----------------------------------------------------------------------
+LOG = get_logger("review")
+
+
 def create_review_app(out_dir: str | Path = "outputs/ingest",
                       db_path: str | Path | None = None,
                       *, title: str = "poisonguard 人审台",
@@ -258,12 +263,15 @@ def create_review_app(out_dir: str | Path = "outputs/ingest",
         item = dict(req.item or {})
         item["key"] = req.key
         try:
-            return store.decide(item, req.decision, reason=req.reason,
-                                note=req.note, reviewer=req.reviewer)
+            out = store.decide(item, req.decision, reason=req.reason,
+                               note=req.note, reviewer=req.reviewer)
         except ValueError as e:
             from fastapi import HTTPException
 
             raise HTTPException(status_code=400, detail=str(e))
+        event(LOG, "review.decision", decision=req.decision, reason=req.reason,
+              flag=item.get("flag"), score=item.get("score"))
+        return out
 
     @app.get("/api/stats")
     def stats() -> dict:

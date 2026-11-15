@@ -81,12 +81,14 @@ python -m poisonguard.cli factcheck $V3 --fact-limit 400   # 数字级事实校�
 python -m poisonguard.cli feedback --student outputs/metrics/student_judge_afqmc.pkl  # 误报闭环（C4）：在线 FPR / 影子阈值 / 难负样本
 python -m poisonguard.cli keygen --out-dir outputs/keys            # ed25519 作者密钥对（B2）
 python scripts/ci_smoke.py                                         # 端到端烟测：tiny 编码器跑通五段链路（B6）
+python -m pytest tests/ -q --cov=poisonguard                        # 覆盖率（地板 40%）
+docker build -t poisonguard:latest .                                # 镜像（本机无 docker，未验证）
 python -m poisonguard.cli redteam $V3    # 判官提示注入红队（plain / 加固 / 加固+脱敏 三档配对）
 python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob --judge-hardened --judge-sanitize --limit 40
 python -m poisonguard.cli report  $V3    # → docs/实验报告_real_v3.md
 python -m poisonguard.cli serve   $V3 --port 8000   # FastAPI: /health /score /stats
 python -m poisonguard.cli doctor                     # 环境自检（换机器先跑这个）
-python -m pytest tests/ -q                           # 161 项测试（data/detect/judge/distill/serve/scan/deploy/ingest/review/feedback/redteam-sanitize/evade/struct/conformal/strongattack/ranker）
+python -m pytest tests/ -q                           # 164 项测试（data/detect/judge/distill/serve/scan/deploy/ingest/review/feedback/redteam-sanitize/evade/struct/conformal/strongattack/ranker）
 ```
 
 `make` 里已经固化了这套：`make data|detect|judge|distill|struct-train|conformal|attack-study|ranker|keygen|smoke|ingest|review|feedback|redteam|report|serve|test|doctor`。
@@ -383,7 +385,7 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 - `outputs/metrics/*.json` 里记录 `encoder / target_fpr / n_train / n_dev / n_test / timestamp`，报告由脚本生成而非手抄
 - v3 起每条指标另带 `provenance`：`git_sha / git_dirty / python / platform / seed / clean_source / edit_family / n_hardneg / qwen / config_hash / 依赖版本`
 - 严格口径开关：`--style-holdout`（dev/test 用互不相交的模板骨架）、`--clean-source tnews`（干净侧换真实新闻）、`--run-tag v3`（产物加后缀，与旧口径并存）
-- 148 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式、ed25519 往返/篡改拒绝、tiny 编码器确定性、入库三档边界/sha 幂等/row_id 保留、人审队列去重/upsert/非法理由拒绝/HTTP 契约、误报率 Wilson 区间/影子阈值/回放召回代价、阈值标定分位/单调/来源优先级、数字抽取/融合 z-score/覆盖率、PASS 抽样确定性/漏报率区间**（161 项全绿）
+- 164 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式、ed25519 往返/篡改拒绝、tiny 编码器确定性、入库三档边界/sha 幂等/row_id 保留、人审队列去重/upsert/非法理由拒绝/HTTP 契约、误报率 Wilson 区间/影子阈值/回放召回代价、阈值标定分位/单调/来源优先级、数字抽取/融合 z-score/覆盖率、PASS 抽样确定性/漏报率区间、日志单行 JSON/级别生效/setup 幂等**（164 项全绿，覆盖率地板 40%）
 - 两列 TPR@1% 都报：`tpr_at_fpr1`（在 test 上找阈值，乐观上界）与 `tpr_at_fpr1_devcal`（阈值只由 dev 定，报告用这一列）。v3 实测 sup_tfidf 两列相等（0.808）、sup_lr 从 0.371 升到 0.469 —— 阈值调优不是虚高的主要来源。
 - `doctor` 子命令做环境自检（13 个依赖 + 编码器/数据/权重路径），换机器第一件事就跑它
 - **场景四完整复现（学生排序 TopK → LLM 判官精判）**：本机已有产物的快速路径（约 10 秒）、干净机器全量 6 步、预期输出与产物位置见 [`docs/复现步骤.md`](docs/复现步骤.md)，复现脚本为 [`examples/repro_scene4.py`](examples/repro_scene4.py)

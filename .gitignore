@@ -39,3 +39,4 @@ outputs/ingest/
 outputs/feedback/
 .acc_p01/
 .acc_p03/
+.acc_log/
