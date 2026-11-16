@@ -32,6 +32,14 @@ from typing import Any
 
 from .config import Config
 
+# FastAPI 可选依赖：模块级 import 使 `from __future__ import annotations` 下
+# FastAPI 也能解析 Request 注解（否则会被当成 query 参数注入 — 422）。
+try:
+    from fastapi import Request as _FastAPIRequest  # noqa: F401
+    _HAS_FASTAPI = True
+except Exception:  # pragma: no cover - 无 fastapi 时 stdio 仍可用
+    _HAS_FASTAPI = False
+
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "poisonguard"
 SERVER_VERSION = "1.0"
@@ -615,6 +623,110 @@ def serve_stdio(server: Server | None = None, inf=None, outf=None) -> int:
 def main() -> int:
     """作为独立进程运行：python -m poisonguard.mcp"""
     return serve_stdio()
+
+
+# ----------------------------------------------------------------------
+# Gap 5：SSE/HTTP transport（MCP 2025-03-26 Streamable HTTP）
+# ----------------------------------------------------------------------
+async def _sse_event_stream(interval: float = 15.0, max_events: int | None = None):
+    """SSE 事件异步生成器（独立、可测）。
+
+    MCP 2025-03-26：第一条是 `event: endpoint`（告诉客户端 POST 地址），
+    之后周期心跳。`max_events` 仅测试用——生产为无限流。
+    """
+    import asyncio
+
+    yield "event: endpoint\ndata: /mcp\n\n"
+    sent = 1
+    while max_events is None or sent < max_events:
+        yield "event: message\ndata: {}\n\n"
+        sent += 1
+        await asyncio.sleep(interval)
+
+
+def build_http_app(server: Server | None = None) -> Any:
+    """构建 FastAPI 应用（不立即启动 uvicorn）。
+
+    暴露：
+      - POST /mcp      JSON-RPC over HTTP（Authorization: Bearer 鉴权）
+      - GET  /mcp      SSE 流（MCP 2025-03-26：连接先 event:endpoint, 再 data）
+      - GET  /health   运行状况（不鉴权，供探活）
+    返回 (app, server)，调用方可选地持有 server 以便注入测试。
+    """
+    from fastapi import FastAPI, Request, Response
+    from fastapi.responses import JSONResponse, StreamingResponse
+
+    server = server or Server()
+    app = FastAPI(title="poisonguard-mcp", version=SERVER_VERSION)
+
+    @app.get("/health")
+    async def _health():
+        return {"status": "ok", "name": SERVER_NAME,
+                "protocolVersion": PROTOCOL_VERSION,
+                "authed": bool(server._authed),
+                "gate_ready": server._gate is not None}
+
+    def _bounded(body: bytes) -> dict | None:
+        try:
+            return json.loads(body.decode("utf-8"))
+        except Exception:
+            return None
+
+    @app.post("/mcp")
+    async def _post_mcp(request: _FastAPIRequest):
+        # 鉴权：带 token 时头必须匹配
+        if server.auth_token:
+            if not server.authorize_bearer(request.headers.get("authorization")):
+                return JSONResponse(
+                    status_code=401,
+                    content=_err(-32001, "unauthorized: Bearer token 缺失或不匹配"),
+                )
+        raw = await request.body()
+        msg = _bounded(raw)
+        if msg is None:
+            return JSONResponse(status_code=400,
+                                content=_err(-32700, "请求体必须是 JSON"))
+        # 批量（streamable http 支持数组）——本项目顺序执行，取第一个响应
+        if isinstance(msg, list):
+            responses = [r for m in msg if (r := server.dispatch(m)) is not None]
+            if not responses:
+                return Response(status_code=202)
+            return JSONResponse(responses if len(responses) > 1 else responses[0])
+        resp = server.dispatch(msg)
+        if resp is None:
+            return Response(status_code=202)  # 通知：无响应体
+        # 工具/资源/提示词内容统一为 text 媒体（兼容官方客户端）
+        return JSONResponse(resp)
+
+    @app.get("/mcp")
+    async def _sse_mcp(request: _FastAPIRequest):
+        if server.auth_token:
+            if not server.authorize_bearer(request.headers.get("authorization")):
+                return JSONResponse(status_code=401,
+                                    content=_err(-32001, "unauthorized"))
+
+        async def event_stream():
+            async for ev in _sse_event_stream(interval=15.0):
+                yield ev
+
+        return StreamingResponse(event_stream(),
+                                 media_type="text/event-stream",
+                                 headers={
+                                     "Cache-Control": "no-cache",
+                                     "X-Accel-Buffering": "no",
+                                 })
+
+    return app, server
+
+
+def serve_http(server: Server | None = None, host: str = "127.0.0.1",
+               port: int = 8011) -> int:
+    """启动 uvicorn 服务（阻塞）。默认 127.0.0.1:8011。"""
+    import uvicorn
+
+    app, _srv = build_http_app(server)
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+    return 0
 
 
 if __name__ == "__main__":

@@ -1046,7 +1046,8 @@ def build_parser() -> argparse.ArgumentParser:
         ("factcheck", "数字级事实校验(P0-2)：数字位置的模型先验 → 抓内容级篡改"),
         ("feedback", "误报闭环(C4)：人审判定 → 在线FPR/影子阈值/难负样本语料"),
         ("gate", "输入闸门(输入侧/检索/工具输出 → allow/watch/block)"),
-        ("mcp", "MCP 服务(P2)：stdio JSON-RPC，Agent 可调 guard/review/ingest"),
+        ("mcp", "MCP 服务(P2+)：stdio JSON-RPC / --http Streamable HTTP+SSE，"
+                "Agent 可调 guard/explain/review/ingest"),
         ("review", "人审台(C1)：BLOCK/WATCH 队列 → 判定 + 理由码落库"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
@@ -1183,6 +1184,14 @@ def build_parser() -> argparse.ArgumentParser:
                            help="显式给出 watch 分界阈值")
             p.add_argument("--block-mult", dest="block_mult", type=float, default=2.0,
                            help="block 阈值 = watch 阈值 × 该倍数")
+        if name == "mcp":
+            p.add_argument("--http", action="store_true",
+                           help="以 Streamable HTTP/SSE 方式起服务（默认 stdio）")
+            p.add_argument("--host", default="127.0.0.1")
+            p.add_argument("--port", type=int, default=8011)
+            p.add_argument("--token", default=None,
+                           help="Bearer token（空=不鉴权；缺省读环境变量 "
+                                "POISONGUARD_MCP_TOKEN）")
         if name == "review":
             p.add_argument("--out-dir", dest="out_dir", default="outputs/ingest",
                            help="ingest 产物目录（读 quarantine/ 与 review/）")
@@ -1509,12 +1518,21 @@ def main(argv: list[str] | None = None) -> int:
               f"= {r['fp_rate']:.2%}  告警={res['alarm']['status']}")
         print(f"[feedback] {res['alarm']['message']}")
     elif args.cmd == "mcp":
-        from .mcp import serve_stdio
+        from .mcp import Server, serve_stdio, serve_http
         import sys as _sys
+        srv = Server(auth_token=args.token) if getattr(args, "token", None) is not None else None
+        if getattr(args, "http", False):
+            auth_on = srv.auth_token != "" if srv else False
+            print(f"[mcp] 启动 Streamable HTTP+SSE 服务 "
+                  f"http://{args.host}:{args.port}/mcp "
+                  f"（auth={'on' if auth_on else 'off'}）",
+                  file=_sys.stderr, flush=True)
+            return serve_http(srv, host=args.host, port=args.port)
         print("[mcp] 启动 stdio JSON-RPC 服务（tools: guard_text / guard_batch / "
-              "review_queue / record_decision / ingest_file）",
+              "explain / read_alert / review_queue / record_decision / ingest_file；"
+              "resources/prompts 已附）",
               file=_sys.stderr, flush=True)
-        return serve_stdio()
+        return serve_stdio(srv) if srv else serve_stdio()
     elif args.cmd == "gate":
         from .gate import Gate, GateConfig, guard_texts, serve_http
 
