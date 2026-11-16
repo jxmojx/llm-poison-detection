@@ -1,0 +1,44 @@
+{
+  "axes": {
+    "length": {
+      "gap": 1.51,
+      "ref_mean_len": 22.01,
+      "in_mean_len": 20.5,
+      "norm": 0.0379,
+      "ok": true
+    },
+    "vector": {
+      "gap": 0.0346,
+      "norm": 0.23,
+      "ok": true,
+      "centroid_dist": 0.0346,
+      "ref_spread": 0.0502
+    },
+    "vocab": {
+      "kl": 2.6846,
+      "coverage": 0.9537,
+      "norm": 0.5,
+      "ok": false
+    }
+  },
+  "summary": {
+    "status": "Amber",
+    "tone": "漂移中等：输入部分偏离训练域，分数仅供参考",
+    "worst_norm": 0.5,
+    "len_drift": 1.51,
+    "vec_drift": 0.0346,
+    "kl_drift": 2.6846,
+    "vocab_cov": 0.9537,
+    "dead_axes": [
+      "vocab"
+    ]
+  },
+  "meta": {
+    "input": "data/scan_demo_afqmc.txt",
+    "n_input": 20,
+    "n_ref": 2844,
+    "with_encoder": true,
+    "seconds": 12.53,
+    "domain": "processed_real_v3"
+  }
+}

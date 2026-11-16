@@ -1006,6 +1006,8 @@ ARG_DEFAULTS = {
     "require_signature": False,
     "fact_model": "Qwen/Qwen2.5-0.5B-Instruct", "fact_limit": 400, "fact_seed": 42,
     "rc_topk": 5, "rc_min_ratio": 0.75, "rc_corpus": "train", "rc_limit": 400, "rc_seed": 42,
+    "drift_input": "", "drift_column": "text", "drift_fmt": "auto",
+    "drift_limit": 500, "drift_no_encoder": False, "drift_seed": 42,
     "calibrate": True, "sample_pass": 0, "db": None, "host": "127.0.0.1", "port": 8077,
     "target_fpr": 0.01, "detector": "sup_tfidf", "mode": "pooled",
     "min_support": 30, "corpus_dir": "outputs/feedback", "report": "docs/运维日报.md",
@@ -1043,6 +1045,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("ingest", "入库钩子(C2)：投递目录 → 自动打分 → 隔离/人审/放行 + 判决台账"),
         ("factcheck", "数字级事实校验(P0-2)：数字位置的模型先验 → 抓内容级篡改"),
         ("ragcheck", "检索式事实核验(P0-2 升级)：拆分事实点→参考语料检索→一致性核验（需先跑 data）"),
+        ("drift", "域漂移体检(P1 换域)：输入 vs 训练域 dev 的三轴漂移报告（长度/向量/字符KL）"),
         ("feedback", "误报闭环(C4)：人审判定 → 在线FPR/影子阈值/难负样本语料"),
         ("gate", "输入闸门(输入侧/检索/工具输出 → allow/watch/block)"),
         ("mcp", "MCP 服务(P2)：stdio JSON-RPC，Agent 可调 guard/review/ingest"),
@@ -1145,6 +1148,19 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--rc-limit", dest="rc_limit", type=int, default=400,
                            help="每个家族抽样条数(0=全量)")
             p.add_argument("--rc-seed", dest="rc_seed", type=int, default=42)
+        if name == "drift":
+            p.add_argument("--input", dest="drift_input", required=True,
+                           help="待体检的输入文件（txt/csv；每行=一条）")
+            p.add_argument("--column", dest="drift_column", default="text",
+                           help="csv 输入时的文本列名(默认 text)")
+            p.add_argument("--fmt", dest="drift_fmt", default="auto",
+                           choices=("auto", "txt", "csv", "tsv"),
+                           help="输入格式(auto=按扩展名)")
+            p.add_argument("--limit", dest="drift_limit", type=int, default=500,
+                           help="最多体检多少条(默认 500；向量轴抽前 min(500,n) 条)")
+            p.add_argument("--no-encoder", dest="drift_no_encoder", action="store_true",
+                           help="跳过编码器（只做长度+字符KL两轴，无需模型）")
+            p.add_argument("--seed", dest="drift_seed", type=int, default=42)
         if name == "feedback":
             p.add_argument("--db", default="outputs/ingest/review.sqlite3",
                            help="人审判决库（review 产出）")
@@ -1477,6 +1493,17 @@ def main(argv: list[str] | None = None) -> int:
                      corpus_source=getattr(args, "rc_corpus", "train"),
                      limit=int(getattr(args, "rc_limit", 0) or 0),
                      seed=int(getattr(args, "rc_seed", 42) or 42))
+    elif args.cmd == "drift":
+        from .drift import run_drift_check
+
+        run_drift_check(cfg,
+                        input_path=getattr(args, "drift_input", "") or "",
+                        out_path=_metrics_path(cfg, "drift.json"),
+                        column=getattr(args, "drift_column", "text"),
+                        fmt=getattr(args, "drift_fmt", "auto"),
+                        limit=int(getattr(args, "drift_limit", 500) or 0),
+                        with_encoder=not bool(getattr(args, "drift_no_encoder", False)),
+                        seed=int(getattr(args, "drift_seed", 42) or 42))
     elif args.cmd == "feedback":
         from .data import load_splits
         from .feedback import run_feedback
