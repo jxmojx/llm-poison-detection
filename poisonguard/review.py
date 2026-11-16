@@ -217,15 +217,25 @@ LOG = get_logger("review")
 def create_review_app(out_dir: str | Path = "outputs/ingest",
                       db_path: str | Path | None = None,
                       *, title: str = "poisonguard 人审台",
-                      sample_pass: int = 0, seed: int = 42):
-    """返回 FastAPI 应用。真实部署时挂在内网，别暴露公网（无鉴权）。"""
-    from fastapi import FastAPI
+                      sample_pass: int = 0, seed: int = 42,
+                      security=None):
+    """返回 FastAPI 应用。
+
+    方向③缺口1：`security`（`poisonguard.security.Security`）默认为 None =
+    无鉴权开发模式。人审台暴露在公网时必须挂 `Security(SecurityConfig(...))`，
+    否则任何人可 POST /api/decision 改写判决结论。挂上后所有 /api/* 都要求
+    有效 API Key，/api/decision 额外要求 admin key（避免普通调用方乱判）。
+    """
+    from fastapi import Depends, FastAPI, HTTPException
     from fastapi.responses import HTMLResponse, PlainTextResponse
     from pydantic import BaseModel
+    from .security import Security, SecurityConfig
 
     out = Path(out_dir)
     store = ReviewStore(db_path or (out / "review.sqlite3"))
     default_pass = int(sample_pass)
+    if security is None:
+        security = Security(SecurityConfig(audit_enabled=False))
 
     class DecisionIn(BaseModel):
         key: str
@@ -237,12 +247,31 @@ def create_review_app(out_dir: str | Path = "outputs/ingest",
 
     app = FastAPI(title=title, version="1.0")
 
+    @app.middleware("http")
+    async def _audit_mw(request, call_next):
+        t0 = time.perf_counter()
+        status = 500
+        try:
+            resp = await call_next(request)
+            status = resp.status_code
+            return resp
+        finally:
+            security.audit.record(
+                action="review.http",
+                method=request.method,
+                path=request.url.path,
+                status=status,
+                api_key_id=request.headers.get("X-API-Key", ""),
+                client_ip=request.client.host if request.client else "",
+                n=0, ms=(time.perf_counter() - t0) * 1000.0)
+
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return _PAGE.replace("__TITLE__", title).replace("__OUT__", str(out))
 
     @app.get("/api/queue")
-    def queue(flag: str = "", limit: int = 50, offset: int = 0,
+    def queue(identity=Depends(security.auth()),
+              flag: str = "", limit: int = 50, offset: int = 0,
               sample_pass: int = 0) -> dict:
         flags = (flag,) if flag in _FLAG_DIRS else tuple(_FLAG_DIRS)
         if sample_pass and "PASS" not in flags and not flag:
@@ -259,26 +288,30 @@ def create_review_app(out_dir: str | Path = "outputs/ingest",
                 "reasons": REASONS, "decisions": list(DECISIONS)}
 
     @app.post("/api/decision")
-    def decision(req: DecisionIn) -> dict:
+    def decision(req: DecisionIn,
+                 identity=Depends(security.auth(admin=True))) -> dict:
         item = dict(req.item or {})
         item["key"] = req.key
         try:
             out = store.decide(item, req.decision, reason=req.reason,
                                note=req.note, reviewer=req.reviewer)
         except ValueError as e:
-            from fastapi import HTTPException
-
             raise HTTPException(status_code=400, detail=str(e))
         event(LOG, "review.decision", decision=req.decision, reason=req.reason,
               flag=item.get("flag"), score=item.get("score"))
+        security.audit.record(
+            action="review.decision", method="POST", path="/api/decision",
+            status=200, api_key_id=identity[1], client_ip=identity[0],
+            n=1, ms=0.0,
+            detail=f"decision={req.decision} reviewer={req.reviewer}")
         return out
 
     @app.get("/api/stats")
-    def stats() -> dict:
+    def stats(identity=Depends(security.auth())) -> dict:
         return store.stats()
 
     @app.get("/api/export.csv", response_class=PlainTextResponse)
-    def export() -> str:
+    def export(identity=Depends(security.auth())) -> str:
         p = store.export_csv(out / "decisions.csv")
         return p.read_text(encoding="utf-8")
 

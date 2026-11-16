@@ -183,11 +183,19 @@ LOG = get_logger("service")
 
 
 def create_app(cfg: Config | None = None, student_path: str | Path | None = None,
-               scorer: PoisonScorer | None = None):
-    """构造 FastAPI 应用（拆出来是为了测试可以注入现成的 scorer）。"""
-    from fastapi import FastAPI, HTTPException
+               scorer: PoisonScorer | None = None, security=None):
+    """构造 FastAPI 应用（拆出来是为了测试可以注入现成的 scorer）。
+
+    `security`：`poisonguard.security.Security` 实例；默认 None = 无鉴权开发模式
+    （保持既有行为，也不落文件审计），上公网/跨团队时由 CLI 显式构造传入。
+    """
+    from fastapi import Depends, FastAPI, HTTPException
+    from .security import Security, SecurityConfig
 
     cfg = cfg or load_config()
+    if security is None:
+        # 测试/默认路径：无鉴权（保持既有行为），也不落文件审计（避免测试副作用）
+        security = Security(SecurityConfig(audit_enabled=False))
     state: dict = {}
 
     def _student() -> Path | None:
@@ -219,8 +227,29 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
                     state["s"] = sc
         return state["s"]
 
+    # 请求审计：无论成败都落一条（鉴权/限流中间的异常也尽量记）
+    @app.middleware("http")
+    async def _audit_mw(request, call_next):
+        t0 = time.perf_counter()
+        status = 500
+        try:
+            resp = await call_next(request)
+            status = resp.status_code
+            return resp
+        finally:
+            ms = (time.perf_counter() - t0) * 1000.0
+            security.audit.record(
+                action="http.request",
+                method=request.method,
+                path=request.url.path,
+                status=status,
+                api_key_id=request.headers.get("X-API-Key", ""),
+                client_ip=request.client.host if request.client else "",
+                n=0, ms=ms,
+                detail="")
+
     @app.get("/health")
-    def health() -> dict:
+    def health(identity=Depends(security.auth())) -> dict:
         s = _scorer()
         return {
             "status": "ok",
@@ -234,7 +263,9 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
         }
 
     @app.post("/score")
-    def score(req: "ScoreRequest") -> dict:
+    def score(req: "ScoreRequest",
+              identity=Depends(security.auth()),
+              _=Depends(security.limited())) -> dict:
         if not req.texts:
             raise HTTPException(status_code=400, detail="texts 不能为空")
         if len(req.texts) > MAX_BATCH:
@@ -250,10 +281,14 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
         event(LOG, "score.request", n=len(req.texts), n_flag=n_flag,
               ms=round((time.perf_counter() - t0) * 1000, 1),
               threshold=res.get("threshold"))
+        security.audit.record(
+            action="score.request", method="POST", path="/score", status=200,
+            api_key_id=identity[1], client_ip=identity[0],
+            n=len(req.texts), ms=round((time.perf_counter() - t0) * 1000, 1))
         return res
 
     @app.get("/stats")
-    def stats() -> dict:
+    def stats(identity=Depends(security.auth())) -> dict:
         return _scorer().stats()
 
     return app
@@ -265,15 +300,43 @@ def main() -> None:
     ap.add_argument("--student", default=None, help="蒸馏学生模型路径(pkl)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
+    # 方向③ 缺口1：鉴权/限流/审计
+    ap.add_argument("--api-key", action="append", default=None,
+                    help="API Key（可多次传，多把 key 同时有效）")
+    ap.add_argument("--admin-key", action="append", default=None,
+                    help="管理 Key（热更新/管理端点专用，可多次传）")
+    ap.add_argument("--auth-disabled", action="store_true",
+                    help="无任何 key 时默认关闭鉴权（内网直连）；给了 key 自动开启")
+    ap.add_argument("--rate-rps", type=float, default=None, help="每秒速率(默认20)")
+    ap.add_argument("--rate-burst", type=float, default=None, help="突发容量(默认60)")
+    ap.add_argument("--audit", default=None,
+                    help="审计 sqlite 路径(默认 outputs/audit/audit.sqlite3)")
     a = ap.parse_args()
     import uvicorn
+
+    from .security import Security, SecurityConfig
 
     cfg = load_config(a.config)
     # 学生模型优先命令行指定，否则自动找：当前实验标签的 pkl → 任意 student_judge*.pkl
     student = a.student or _default_student(cfg)
-    app = create_app(cfg, student_path=student)
+    sec_cfg = SecurityConfig.from_cli(
+        api_keys=a.api_key, admin_keys=a.admin_key,
+        rate_rps=a.rate_rps, rate_burst=a.rate_burst, audit_path=a.audit)
+    if a.auth_disabled:
+        # 显式 --auth-disabled：即使给了 key 也强制关（本地/压测场景）
+        sec_cfg.disabled = True
+        sec_cfg.api_keys = None
+        sec_cfg.admin_keys = None
+    security = Security(sec_cfg)
+    app = create_app(cfg, student_path=student, security=security)
+    mode = "鉴权关闭(内网/开发)" if sec_cfg.disabled else \
+        f"鉴权开启(API Keys={len(security.keys.count() or 0)})"
     print(f"[serve] 阈值装配完成，监听 http://{a.host}:{a.port}"
-          f"  (student={student})")
+          f"  (student={student}, {mode})")
+    if not sec_cfg.disabled:
+        loc = sec_cfg.audit_path or "outputs/audit/audit.sqlite3"
+        print(f"[serve] 审计日志: {loc}  (rate={sec_cfg.rate_rps}rps"
+              f" burst={sec_cfg.rate_burst})")
     uvicorn.run(app, host=a.host, port=a.port, log_level="info")
 
 

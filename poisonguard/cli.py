@@ -880,6 +880,27 @@ def cmd_distill(cfg: Config, args) -> dict:
     )
 
 
+def _cli_security(args, *, default_disabled: bool = True):
+    """从 CLI 参数构造 Security（serve/review 共用）。
+
+    `--api-key/--admin-key` 给了任何一个就强制开鉴权；只有显式
+    `--auth-disabled` 或一个 key 都没给时才走内网直连。
+    """
+    from .security import Security, SecurityConfig
+
+    cfg = SecurityConfig.from_cli(
+        api_keys=list(getattr(args, "api_key", None) or ()),
+        admin_keys=list(getattr(args, "admin_key", None) or ()),
+        rate_rps=getattr(args, "rate_rps", None),
+        rate_burst=getattr(args, "rate_burst", None),
+        audit_path=getattr(args, "audit", None))
+    if getattr(args, "auth_disabled", False):
+        cfg.disabled = True
+        cfg.api_keys = None
+        cfg.admin_keys = None
+    return Security(cfg)
+
+
 def cmd_serve(cfg: Config, args) -> None:
     """起在线打分服务（数据层 + 学生模型，不含 LLM）。"""
     import uvicorn
@@ -887,10 +908,16 @@ def cmd_serve(cfg: Config, args) -> None:
     from .service import _default_student, create_app
 
     student = getattr(args, "student", None) or _default_student(cfg)
-    app = create_app(cfg, student_path=student)
+    security = _cli_security(args)
+    app = create_app(cfg, student_path=student, security=security)
     host = getattr(args, "host", "127.0.0.1")
     port = int(getattr(args, "port", 8000))
-    print(f"[serve] http://{host}:{port}  (student={student})")
+    mode = "鉴权关闭(内网)" if security.cfg.disabled else \
+        f"鉴权开启(keys={security.keys.count()})"
+    print(f"[serve] http://{host}:{port}  (student={student}, {mode})")
+    if not security.cfg.disabled:
+        print(f"[serve] 审计: {security.cfg.audit_path or 'outputs/audit/audit.sqlite3'}"
+              f"  rate={security.cfg.rate_rps} burst={security.cfg.rate_burst}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
@@ -1173,10 +1200,30 @@ def build_parser() -> argparse.ArgumentParser:
                            help="判决库路径（默认 <out-dir>/review.sqlite3）")
             p.add_argument("--host", default="127.0.0.1")
             p.add_argument("--port", type=int, default=8077)
+            # 方向③缺口1：人审台对外暴露必须带 key
+            p.add_argument("--api-key", action="append", default=None,
+                           help="API Key（可多次，多把同时有效）")
+            p.add_argument("--admin-key", action="append", default=None,
+                           help="管理 Key：判决/写操作专用（可多次）")
+            p.add_argument("--auth-disabled", action="store_true",
+                           help="强制关鉴权（内网/开发；默认无 key 时自动关）")
+            p.add_argument("--rate-rps", type=float, default=None)
+            p.add_argument("--rate-burst", type=float, default=None)
+            p.add_argument("--audit", default=None, help="审计 sqlite 路径")
         if name == "serve":
             p.add_argument("--host", default="127.0.0.1")
             p.add_argument("--port", type=int, default=8000)
             p.add_argument("--student", default=None, help="学生模型 pkl 路径")
+            # 方向③缺口1：鉴权/限流/审计
+            p.add_argument("--api-key", action="append", default=None,
+                           help="API Key（可多次，多把同时有效）")
+            p.add_argument("--admin-key", action="append", default=None,
+                           help="管理 Key：热更新/管理端点专用（可多次）")
+            p.add_argument("--auth-disabled", action="store_true",
+                           help="强制关鉴权（内网/开发；给了 key 也强制关）")
+            p.add_argument("--rate-rps", type=float, default=None)
+            p.add_argument("--rate-burst", type=float, default=None)
+            p.add_argument("--audit", default=None, help="审计 sqlite 路径")
         if name == "ingest":
             p.add_argument("--calibrate", action=argparse.BooleanOptionalAction,
                            default=True,
@@ -1541,11 +1588,18 @@ def main(argv: list[str] | None = None) -> int:
         import uvicorn
 
         out_dir = getattr(args, "out_dir", "outputs/ingest")
+        security = _cli_security(args)
         app = create_review_app(out_dir, getattr(args, "db", None),
-                                sample_pass=int(getattr(args, "sample_pass", 0) or 0))
+                                sample_pass=int(getattr(args, "sample_pass", 0) or 0),
+                                security=security)
         host = getattr(args, "host", "127.0.0.1")
         port = int(getattr(args, "port", 8077))
-        print(f"[review] http://{host}:{port}  队列={out_dir}（无鉴权，别暴露公网）")
+        mode = "鉴权关闭(内网)" if security.cfg.disabled else \
+            f"鉴权开启(keys={security.keys.count()})"
+        print(f"[review] http://{host}:{port}  队列={out_dir}（{mode}）")
+        if not security.cfg.disabled:
+            print("[review] 判决需 admin key；审计见 "
+                  f"{security.cfg.audit_path or 'outputs/audit/audit.sqlite3'}")
         uvicorn.run(app, host=host, port=port, log_level="warning")
     elif args.cmd == "serve":
         cmd_serve(cfg, args)
