@@ -15,7 +15,7 @@
 | 中文用 `text.split()` 算 KL | 不分词 → 退化为整句比对，阈值 0.5 无意义 | 句向量 + 距离/密度检测；阈值按**目标误报率**校准 |
 | 只有 accuracy | 极不均衡任务，"全判正常"就有 99% | AUROC / AUPRC / **TPR@FPR=1%** / 分家族召回 / OOD 误报 / Bootstrap CI / McNemar |
 | `IsolationForest` 从未 `fit` | 直接 `predict` 必抛异常 | 真正实现并纳入对比 |
-| 862 行文件里 90% 是死代码 | `python network.py` 零输出退出 | 15 个模块约 3700 行、单一职责，11 个子命令 |
+| 862 行文件里 90% 是死代码 | `python network.py` 零输出退出 | 40 个模块约 13500 行、单一职责，29 个子命令 |
 
 ---
 
@@ -88,7 +88,7 @@ python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob -
 python -m poisonguard.cli report  $V3    # → docs/实验报告_real_v3.md
 python -m poisonguard.cli serve   $V3 --port 8000   # FastAPI: /health /score /stats
 python -m poisonguard.cli doctor                     # 环境自检（换机器先跑这个）
-python -m pytest tests/ -q                           # 164 项测试（data/detect/judge/distill/serve/scan/deploy/ingest/review/feedback/redteam-sanitize/evade/struct/conformal/strongattack/ranker）
+python -m pytest tests/ -q                           # 262 项测试（data/detect/judge/distill/serve/scan/deploy/ingest/review/feedback/redteam-sanitize/evade/struct/conformal/strongattack/ranker/ragcheck/drift/parsers/chunking/vecdb/stress）
 ```
 
 `make` 里已经固化了这套：`make data|detect|judge|distill|struct-train|conformal|attack-study|ranker|keygen|smoke|ingest|review|feedback|redteam|report|serve|test|doctor`。
@@ -160,6 +160,42 @@ python -m poisonguard.cli run --bundle outputs/deploy/poisonguard-afqmc.pkg \\
 - **校验口径**：`.pkg` 与作者侧装配逐条分数差 **0**、分档 0 处不一致。
 - 一致性保证：包内记录 `encoder.name` / `max_length`，加载时校验编码器一致（换编码器=换特征空间，kNN/学生失效，直接报错）；版本号不匹配抛 `ValueError`。
 - 报告口径：`domain`/`encoder` 取自包内，不依赖部署机的 `processed_<域>` 目录；判官阈值同样取自包内域值。
+
+### RAG 守卫支线（`feat/rag-guard`，方向①的六项补齐）
+
+面向「**RAG 向量库投毒**」的六个能力，配套 `ragcheck / drift / stress` 三个新子命令与 `parsers / chunking / vecdb` 三个新模块：
+
+```bash
+# ① 检索式事实核验（P0-2 数字级的升级，edit AUROC 0.353 → 0.769）
+python -m poisonguard.cli ragcheck --clean-source tnews --edit --hardneg 400 --run-tag v3 \
+    --rc-corpus train --rc-limit 400
+#   把被检文本拆事实点（数字/单位/日期/事实词）→ 对参考语料（train 干净）余弦 top-5 检索
+#   → 近重复 (ratio≥0.75) + 事实改动 = 冲突。TPR@1% 10.85%（数字级 0.06% 的 194×），
+#   edit 均分 0.507 vs normal 0.004（~100× 分离）。诚实边界：只抓 in-KB 篡改，
+#   paraphrase 等同分布改写明确 OOS（分层记账，不混入融合分数）。
+#   产物：outputs/metrics/ragcheck_real_v3.json
+
+# ② 开箱换域 + 域漂移体检（同域 Green / 换域 afqmc Amber）
+python -m poisonguard.cli drift --clean-source tnews --run-tag v3 \
+    --input data/scan_demo_afqmc.txt --no-encoder
+#   长度 / 向量质心 / 字符KL+词汇覆盖 三轴 vs 训练域 dev → 绿/黄/红 结论（outputs/metrics/drift_real_v3.json）
+
+# ③④ 长文档解析 + 分块（docx/pdf/txt → 纯文本 → 保事实点分块）
+python -c "from poisonguard.parsers import extract_text; print(extract_text('data/inbox/doc.docx'))"
+python -c "from poisonguard.chunking import chunk_text; [print(c.as_dict()) for c in chunk_text('…长文…')]"
+
+# ⑤ 向量库集成（零重依赖余弦最近邻 + npz 持久化 + brute/sklearn 双后端）
+python -c "from poisonguard.vecdb import create; s=create(768); s.add(['d1'],[...])"
+
+# ⑥ 吞吐压测（encoder 6.45ms p50/129 QPS ｜ scorer 20.62ms/46 QPS ｜ ragcheck_scan 21.86ms ｜ vecdb 0.13ms/7787 QPS）
+python -m poisonguard.cli stress --clean-source tnews --run-tag v3 --n-texts 100 --n-repeat 3 --real-encoder
+#   产物：outputs/metrics/stress_real_v3.json（吞吐数字必须灌缓存后采，否则是缓存方差不是能力）
+#   示例脚本：examples/ragcheck_demo.py 与 tests/test_{ragcheck,drift,parsers,chunking,vecdb,stress}.py
+
+几个关键数字（CPU、crom、real_v3）：
+- 检索层 edit vs normal AUROC **0.769**（数字级 0.353 的反向失败被纠正）；TPR@1% **10.85%** = 数字级 0.056% 的 **194×**；edit/normal 均分 **~100× 分离**。
+- `ragcheck --rc-limit 400` 全流程 487s（12000 条参考语料检索）；`drift` 换域 afqmc 秒级出报告（KL 2.68 指向词汇轴 → Amber）。
+- `stress --real-encoder`：encoder 129 QPS、完整打分栈 46 QPS、检索一致性 46 QPS、**vecdb 查询 7787 QPS（0.13ms）——向量索引是事实核验里最快的循环**。
 
 
 **关键机制发现（对落地方向最有价值）**：词面法对"内容级篡改"的抓取能力不是常数，而是**句长/信息密度的函数**——afqmc 平均 13 字，单点编辑会改掉句子里高权重的字符 n-gram（如「借呗/先息/等额」），sup_tfidf 对 edit 召回直接到 0.674；iflytek 289 字长句，单点替换淹没在几百个 n-gram 里（0.014）。→ **RAG 碎片 / QA / 评论等短文本域，词面法就够强；长文档域必须依赖语义判官层**。完整数字见 [`docs/实验报告_iflytek.md`](docs/实验报告_iflytek.md) 与 [`docs/实验报告_afqmc.md`](docs/实验报告_afqmc.md)。
@@ -328,7 +364,13 @@ poisonguard/            新实现（可 pip 安装的包）
   train_qwen_lora.py     QLoRA 微调判官（手写训练循环，少依赖）
   evaluate.py            指标 + 图表
   report.py              自动生成 Markdown 报告
-  cli.py                 11 个子命令
+  cli.py                 29 个子命令
+  ragcheck.py            检索式事实核验（拆事实点 → 参考语料余弦检索 → 一致性核验）
+  drift.py               域漂移体检（长度/向量质心/字符 KL 三轴）
+  parsers.py             docx/pdf/txt 统一纯文本抽取（零新依赖兜底）
+  chunking.py            长文本按句分块 + 重叠 + 保"数字+单位"完整
+  vecdb.py               零重依赖余弦最近邻 + npz 持久化（brute/sklearn 双后端）
+  stress.py              吞吐压测：encoder/scorer/检索一致性/向量库四段 QPS
 
 configs/default.yaml
 data/raw/                原始 CSV + CLUE/tnews 真实新闻
@@ -385,7 +427,7 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 - `outputs/metrics/*.json` 里记录 `encoder / target_fpr / n_train / n_dev / n_test / timestamp`，报告由脚本生成而非手抄
 - v3 起每条指标另带 `provenance`：`git_sha / git_dirty / python / platform / seed / clean_source / edit_family / n_hardneg / qwen / config_hash / 依赖版本`
 - 严格口径开关：`--style-holdout`（dev/test 用互不相交的模板骨架）、`--clean-source tnews`（干净侧换真实新闻）、`--run-tag v3`（产物加后缀，与旧口径并存）
-- 164 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式、ed25519 往返/篡改拒绝、tiny 编码器确定性、入库三档边界/sha 幂等/row_id 保留、人审队列去重/upsert/非法理由拒绝/HTTP 契约、误报率 Wilson 区间/影子阈值/回放召回代价、阈值标定分位/单调/来源优先级、数字抽取/融合 z-score/覆盖率、PASS 抽样确定性/漏报率区间、日志单行 JSON/级别生效/setup 幂等**（164 项全绿，覆盖率地板 40%）
+- 262 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式、ed25519 往返/篡改拒绝、tiny 编码器确定性、入库三档边界/sha 幂等/row_id 保留、人审队列去重/upsert/非法理由拒绝/HTTP 契约、误报率 Wilson 区间/影子阈值/回放召回代价、阈值标定分位/单调/来源优先级、数字抽取/融合 z-score/覆盖率、PASS 抽样确定性/漏报率区间、日志单行 JSON/级别生效/setup 幂等、**事实点抽取种类/重叠合并/冲突矩阵（近重复含事实改动>0、恒等=0、无关=0）、top-k 余弦检索集合正确、explain 结构、域漂移三轴（KL 恒等=0/不交>1、覆盖率、阈值为真的同域绿/远域红、向量轴注入随机矩阵可检出）、docx 段落+表格/最小 PDF 流抽取、分块重叠尾串/数字单位不截断/超长硬切、向量库双后端排序一致(<1e-9)/upsert/持久化往返、压测四段 TinyEncoder 快跑**（262 项全绿，覆盖率地板 40%）
 - 两列 TPR@1% 都报：`tpr_at_fpr1`（在 test 上找阈值，乐观上界）与 `tpr_at_fpr1_devcal`（阈值只由 dev 定，报告用这一列）。v3 实测 sup_tfidf 两列相等（0.808）、sup_lr 从 0.371 升到 0.469 —— 阈值调优不是虚高的主要来源。
 - `doctor` 子命令做环境自检（13 个依赖 + 编码器/数据/权重路径），换机器第一件事就跑它
 - **场景四完整复现（学生排序 TopK → LLM 判官精判）**：本机已有产物的快速路径（约 10 秒）、干净机器全量 6 步、预期输出与产物位置见 [`docs/复现步骤.md`](docs/复现步骤.md)，复现脚本为 [`examples/repro_scene4.py`](examples/repro_scene4.py)
@@ -416,3 +458,6 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 19. **入库目前是「目录轮询」，不是事件订阅**：`ingest`（`poisonguard/ingest.py`，环节 23）把 scan 变成「投递目录 → 自动分档 → sqlite 台账」，可按 `file_sha+row_id` 幂等重放、每条判决带 model/pkg_sha/threshold，但真实接入仍需一个对象存储/Kafka 消费者把文件落到 inbox（或直接把 `Ingestor.ingest_file` 嵌进对方 worker）；`--watch` 常驻模式是单机单进程假设，没有并发锁与断点续传。
 20. **人审台是内网工具，不是产品**：`review`（`poisonguard/review.py`，环节 24）单页读队列、键盘判定、理由码落 sqlite、可导出 CSV，但**没有鉴权**（别暴露公网）、没有批量操作与撤销、没有多人分派；理由码是封闭集，业务扩展要改 `REASONS`。它存在的意义是把「判完的结论」变成 C4 可用的标签。
 21. **误报闭环只能估「拦截精度」，估不了漏报率**：`feedback`（`poisonguard/feedback.py`，环节 25）用「被判 BLOCK/WATCH 且人审 benign」的比例做在线 FPR，配 Wilson 区间与最小样本门槛（默认 30，不足就明确说「不下结论」）；影子阈值只给建议、并把「放过多少误报 vs 丢多少确认毒」同时摆出来。但人只审被拦下的样本——**系统放过的没人看，这是选择偏差**，要估漏报必须对 PASS 队列抽样送审。
+22. **检索式事实核验只对"in-KB 篡改"负责**（`ragcheck`，环节 30）：它把被检文本对**已可信的参考语料**做近重复+事实改动核验（edit AUROC 0.769、TPR@1% 10.85%）——这正是 RAG 向量库"改写库内文档再灌回去"这种 vector-store-write 投毒场景；但它**天然得 0 分**于 template/paraphrase/subtle/backdoor/ood（不与任何库内句近重复、或改写幅度>0.75 ratio 阈值）。这不是缺陷而是分层：检索层管"改了库里的东西"，语义层（判官）管"看起来无害但有毒"。所以检索分**不并入融合分数**，避免把 OOS 家族拉向 0 而虚高全局 AUROC。
+23. **解析器/分块/向量库都有明确边界**（`parsers`/`chunking`/`vecdb`，环节 32-34）：PDF 只抽文字流，**扫描版/图片页无 OCR** 拿不到文本；分块是"按句+重叠"的启发式，未做语义边界（标题/段落锚点）；向量库是**零重依赖的线性全扫**（brute/sklearn），参考集到十万/百万级要换 faiss/HNSW（`backend` 槽已留，接口不动）。
+24. **吞吐数字是"灌缓存后"的 CPU 口径**（`stress`，环节 35）：scorer 20.62ms p50 / 46 QPS、vecdb 0.13ms / 7787 QPS 都是把编码器缓存热了之后采的——冷缓存 p99 会到 826ms/2405ms，那不是能力是缓存方差；GPU/批量推理会把 encoder 从 129 QPS 再提一个量级。首次跑 `--real-encoder` 必须先热一遍再采数，否则自欺。
