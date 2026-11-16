@@ -260,6 +260,9 @@ class Security:
         for k in self.cfg.admin_keys or ():
             self.keys.add(k, admin=True)
         self.limiter = RateLimiter(self.cfg.rate_rps, self.cfg.rate_burst)
+        # 管理端点独立限流桶：带 min_interval，且跨请求共享（不能每次 new 一个）
+        self._admin_limiter = RateLimiter(self.cfg.rate_rps, self.cfg.rate_burst,
+                                          interval=self.cfg.min_interval)
         self.audit = AuditStore(self.cfg.audit_path, enabled=self.cfg.audit_enabled)
 
     # -- fastapi 依赖工厂 -------------------------------------------------
@@ -270,8 +273,7 @@ class Security:
         return rate_limit(self.limiter)
 
     def admin_limited(self):
-        return rate_limit(RateLimiter(self.cfg.rate_rps, self.cfg.rate_burst,
-                                      interval=self.cfg.min_interval))
+        return rate_limit(self._admin_limiter)
 
     # -- 便捷审计 ---------------------------------------------------------
     def record(self, *, action: str, method: str = "", path: str = "",

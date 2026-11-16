@@ -49,8 +49,13 @@ try:  # 没装 fastapi 时也要能 import 本模块（只影响服务，不影�
         # 批量上限在端点里判（返回 413 而不是 pydantic 的 422），前端好区分"太快"和"太多"
         texts: list[str] = Field(default_factory=list)
         explain: bool = False
+
+    class SwitchIn(BaseModel):
+        """热切换请求体：version 为空 = 重建一个新版本并切换过去。"""
+        version: str = ""
 except Exception:  # pragma: no cover
     ScoreRequest = None  # type: ignore[assignment]
+    SwitchIn = None  # type: ignore[assignment]
 
 
 class PoisonScorer:
@@ -183,11 +188,15 @@ LOG = get_logger("service")
 
 
 def create_app(cfg: Config | None = None, student_path: str | Path | None = None,
-               scorer: PoisonScorer | None = None, security=None):
+               scorer: PoisonScorer | None = None, security=None,
+               scorer_factory=None):
     """构造 FastAPI 应用（拆出来是为了测试可以注入现成的 scorer）。
 
     `security`：`poisonguard.security.Security` 实例；默认 None = 无鉴权开发模式
     （保持既有行为，也不落文件审计），上公网/跨团队时由 CLI 显式构造传入。
+
+    `scorer_factory`：`callable() -> PoisonScorer`，用于装配新打分器实例
+    （方向③缺口2 热更新/版本切换的测试钩子；默认走 build_scorer + 阈值标定）。
     """
     from fastapi import Depends, FastAPI, HTTPException
     from .security import Security, SecurityConfig
@@ -201,31 +210,144 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
     def _student() -> Path | None:
         return Path(student_path) if student_path else _default_student(cfg)
 
-    app = FastAPI(title="poisonguard 在线打分服务", version="1.0")
+    app = FastAPI(title="poisonguard 在线打分服务", version="2.0")
 
     _build_lock = threading.Lock()
+    _versions: dict[str, PoisonScorer] = {}
+    _active: str | None = None
+    _history: list[str] = []  # 近 N 个 active 版本名（滚回上上版用）
+
+    def _factory() -> PoisonScorer:
+        if scorer_factory is not None:
+            return scorer_factory()
+        return build_scorer(cfg, student_path=_student())
+
+    def _recalibrate(sc: PoisonScorer) -> PoisonScorer:
+        # P0-1：阈值口径统一（dev 干净集 1% 工作点），否则线上=0.5
+        try:
+            from .threshold import describe, resolve_threshold
+
+            res = resolve_threshold(sc, cfg, calibrate=True)
+            sc.threshold = float(res["threshold"])
+            print(f"[serve] 阈值口径：{describe(res)}")
+        except Exception as exc:  # 没有 processed 目录时保持默认 / 注入的测试 scorer
+            print(f"[serve] 警告: 阈值标定跳过({exc})")
+        return sc
 
     def _scorer() -> PoisonScorer:
         """懒装配 + 加锁：并发首请求会同时触发 build_scorer（装配要几秒），
         不加锁时两个线程会各自 import transformers，先到的那个可能撞上
-        半初始化的模块（实测过一次 ImportError: cannot import name 'AutoModel'）。"""
-        if scorer is not None:
-            return scorer
-        if "s" not in state:
-            with _build_lock:
-                if "s" not in state:
-                    sc = build_scorer(cfg, student_path=_student())
-                    # P0-1：阈值口径统一（dev 干净集 1% 工作点），否则线上=0.5
-                    try:
-                        from .threshold import describe, resolve_threshold
+        半初始化的模块（实测过一次 ImportError: cannot import name 'AutoModel'）。
 
-                        res = resolve_threshold(sc, cfg, calibrate=True)
-                        sc.threshold = float(res["threshold"])
-                        print(f"[serve] 阈值口径：{describe(res)}")
-                    except Exception as exc:  # 没有 processed 目录时保持默认
-                        print(f"[serve] 警告: 阈值标定跳过({exc})")
-                    state["s"] = sc
-        return state["s"]
+        registry 里的版本号从 scorer.version 取；重名时拼 `#n` 递增后缀，
+        保证每个快照在 registry 里都有唯一 key 可被 switch/回滚。
+        """
+        if scorer is not None:
+            # 注入的测试 scorer：不参与版本管理（就一个，直接用）
+            return scorer
+        nonlocal _active
+        if _active is None:
+            with _build_lock:
+                if _active is None:
+                    sc = _recalibrate(_factory())
+                    _register(sc.version, sc)
+                    _active = list(_versions)[-1]
+        return _versions[_active]
+
+    def _register(version: str, sc: PoisonScorer) -> str:
+        key = version
+        n = 2
+        while key in _versions:
+            key = f"{version}#{n}"
+            n += 1
+        _versions[key] = sc
+        return key
+
+    def _switch_to(key: str, *, build: bool = False, push_history: bool = True,
+                   via: str = "/admin/switch") -> dict:
+        nonlocal _active
+        with _build_lock:
+            old = _active
+            if build or key not in _versions:
+                sc = _recalibrate(_factory())
+                key = _register(getattr(sc, "version", "rebuilt"), sc)
+            if push_history and old:
+                _history.append(old)
+            _active = key
+            event(LOG, "model.switch", to=key, from_=old,
+                  n_versions=len(_versions))
+            security.audit.record(
+                action="model.switch", method="POST", path=via,
+                status=200, detail=f"from={old} to={key}")
+            return {
+                "ok": True,
+                "active": key,
+                "model": _versions[key].version,
+                "from": old,
+                "n_versions": len(_versions),
+            }
+
+    # ---- 方向③缺口2：模型版本热管理 --------------------------------
+    @app.get("/admin/models")
+    def admin_models(_=Depends(security.auth(admin=True))) -> dict:
+        s = _scorer()
+        return {
+            "active": _active,
+            "model": s.version,
+            "versions": [{"key": k, "model": v.version,
+                          "threshold": getattr(v, "threshold", None),
+                          "active": (k == _active)}
+                         for k, v in _versions.items()],
+            "student_path": str(_student()),
+        }
+
+    @app.post("/admin/reload")
+    def admin_reload(_=Depends(security.auth(admin=True)),
+                     __=Depends(security.admin_limited())) -> dict:
+        """从磁盘重新装配当前模型（换数据/换学生模型后热生效），失败回滚旧版。"""
+        nonlocal _active
+        old = _active
+        try:
+            sc = _recalibrate(_factory())
+            with _build_lock:
+                _history.append(old)
+                key = _register(sc.version, sc)
+                _active = key
+                event(LOG, "model.reload", to=key, from_=old)
+                security.audit.record(
+                    action="model.reload", method="POST", path="/admin/reload",
+                    status=200, detail=f"from={old} to={key}")
+                return {"ok": True, "active": key, "model": sc.version,
+                        "from": old}
+        except Exception as exc:
+            event(LOG, "model.reload_error", level=logging.ERROR,
+                  err=type(exc).__name__, msg=str(exc))
+            raise HTTPException(status_code=500,
+                                detail=f"重载失败，保持旧模型: {exc}")
+
+    @app.post("/admin/switch")
+    def admin_switch(req: SwitchIn,
+                     _=Depends(security.auth(admin=True)),
+                     __=Depends(security.admin_limited())) -> dict:
+        """切换到 registry 里的另一个已装配版本（version 为空=重建新的）。"""
+        if req.version:
+            if req.version not in _versions:
+                raise HTTPException(status_code=404,
+                                    detail=f"未知版本 {req.version!r}；"
+                                           f"可用: {sorted(_versions)}")
+            return _switch_to(req.version)
+        return _switch_to("", build=True)
+
+    @app.post("/admin/rollback")
+    def admin_rollback(_=Depends(security.auth(admin=True)),
+                       __=Depends(security.admin_limited())) -> dict:
+        """回滚到上一个 active 版本（热更新翻车时一键还原）。"""
+        if not _history:
+            raise HTTPException(status_code=409, detail="没有可回滚的历史")
+        target = _history.pop()
+        if target not in _versions:
+            raise HTTPException(status_code=404, detail=f"历史版本 {target!r} 已不存在")
+        return _switch_to(target, push_history=False, via="/admin/rollback")
 
     # 请求审计：无论成败都落一条（鉴权/限流中间的异常也尽量记）
     @app.middleware("http")
