@@ -11,6 +11,10 @@
 * `GET  /health`  存活 + 当前模型版本、阈值、可用组件
 * `POST /score`   `{"texts": ["..."], "explain": true}` → 逐条分数、是否拦截、各视图明细
 * `GET  /stats`   调用量、延迟分位数（接监控用）
+* `POST /batch`   `{"texts": [...]}` → 提交异步批量任务，立即返回 job_id（不阻塞）
+* `GET  /batch/{job_id}`  轮询批量任务状态/结果（queued/running/done/failed）
+* `GET  /admin/models` `POST /admin/reload` `POST /admin/switch`
+  `POST /admin/rollback`  模型版本热管理（方向③缺口2）
 
 起服务
 ------
@@ -30,6 +34,8 @@ import threading
 
 import argparse
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from pathlib import Path
 
@@ -53,9 +59,15 @@ try:  # 没装 fastapi 时也要能 import 本模块（只影响服务，不影�
     class SwitchIn(BaseModel):
         """热切换请求体：version 为空 = 重建一个新版本并切换过去。"""
         version: str = ""
+
+    class BatchIn(BaseModel):
+        """异步批量打分：texts 可超 MAX_BATCH，服务端切块排队执行。"""
+        texts: list[str] = Field(default_factory=list)
+        explain: bool = False
 except Exception:  # pragma: no cover
     ScoreRequest = None  # type: ignore[assignment]
     SwitchIn = None  # type: ignore[assignment]
+    BatchIn = None  # type: ignore[assignment]
 
 
 class PoisonScorer:
@@ -348,6 +360,102 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
         if target not in _versions:
             raise HTTPException(status_code=404, detail=f"历史版本 {target!r} 已不存在")
         return _switch_to(target, push_history=False, via="/admin/rollback")
+
+    # ---- 方向③缺口3：异步批量打分 ---------------------------------
+    # 一次性大批量（>512）走"提交即回"的队列：不占请求线程，判定产出在后台执行。
+    # 无第三方队列依赖：进程内限长队列 + 固定 worker 线程池（多实例下游再挂 MQ）。
+    _batch: dict[str, dict] = {}          # job_id -> 任务记录
+    _batch_order: deque[str] = deque()    # FIFO 顺序（用于淘汰最老任务）
+    _batch_max_jobs = 128                 # 同时驻留任务数上限
+    _batch_running = 0                    # 正在执行的 worker 数（节流用）
+    _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="batch")
+
+    def _batch_submit(texts: list[str], explain: bool) -> str:
+        """登记任务并调度 worker；返回 job_id。"""
+        nonlocal _batch_running
+        # 容量保护：超出时淘汰最老且未运行的任务
+        while len(_batch) >= _batch_max_jobs:
+            old = _batch_order.popleft()
+            if _batch[old]["state"] not in ("queued", "running"):
+                del _batch[old]
+                continue
+            _batch[old]["state"] = "cancelled"
+            _batch[old]["error"] = "任务过饱和，已被淘汰"
+            del _batch[old]  # cancelled 也不占用（poll 409 说明被淘汰）
+            if not _batch_order:
+                break
+        job = {"job_id": "", "state": "queued", "explain": explain,
+               "total": len(texts), "done": 0, "results": [], "error": "",
+               "created": time.time()}
+        job_id = uuid.uuid4().hex[:12]
+        job["job_id"] = job_id
+        _batch[job_id] = job
+        _batch_order.append(job_id)
+
+        def _run():
+            nonlocal _batch_running
+            _batch_running += 1
+            try:
+                sc = _scorer()   # 惰性装配（同步路径建好也可能被 admin 切走）
+                out = []
+                # 切块：落下层 MAX_BATCH 上限，也避免单个大 list 占内存
+                for i in range(0, len(texts), MAX_BATCH):
+                    chunk = texts[i:i + MAX_BATCH]
+                    res = sc.score(chunk, explain=explain)
+                    out.extend(res.get("results", []))
+                    job["done"] = len(out)
+                    job["state"] = "running"
+                job["results"] = out
+                job["state"] = "done"
+            except Exception as exc:
+                job["error"] = f"{type(exc).__name__}: {exc}"
+                job["state"] = "failed"
+            finally:
+                _batch_running -= 1
+
+        _executor.submit(_run)
+        return job_id
+
+    @app.post("/batch")
+    def batch_submit(req: "BatchIn",
+                     identity=Depends(security.auth()),
+                     _=Depends(security.limited())) -> dict:
+        if not req.texts:
+            raise HTTPException(status_code=400, detail="texts 不能为空")
+        if _batch_running >= 2 * _batch_max_jobs:  # 防御：worker 全忙也限总驻留
+            raise HTTPException(status_code=503, detail="批处理队列已满，请稍后再试")
+        job_id = _batch_submit(req.texts, req.explain)
+        event(LOG, "batch.submit", job=job_id, n=len(req.texts))
+        security.audit.record(
+            action="batch.submit", method="POST", path="/batch", status=200,
+            api_key_id=identity[1], client_ip=identity[0],
+            n=len(req.texts), ms=0.0)
+        return {"job_id": job_id, "status": "queued", "total": len(req.texts)}
+
+    @app.get("/batch/{job_id}")
+    def batch_status(job_id: str,
+                     identity=Depends(security.auth()),
+                     _=Depends(security.limited())) -> dict:
+        job = _batch.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="未知 job_id（可能已过期淘汰）")
+        resp = {"job_id": job["job_id"], "state": job["state"],
+                "total": job["total"], "done": job["done"]}
+        if job["state"] == "done":
+            resp["results"] = job["results"]
+            resp["threshold"] = getattr(_scorer(), "threshold", None)
+        if job["error"]:
+            resp["error"] = job["error"]
+        return resp
+
+    @app.get("/batch/")
+    def batch_list(identity=Depends(security.auth()),
+                   _=Depends(security.limited())) -> dict:
+        """列出驻留任务（状态/进度），管理端排障用。"""
+        return {"running": _batch_running,
+                "jobs": [{"job_id": j["job_id"], "state": j["state"],
+                          "total": j["total"], "done": j["done"]}
+                         for j in _batch.values()]}
 
     # 请求审计：无论成败都落一条（鉴权/限流中间的异常也尽量记）
     @app.middleware("http")
