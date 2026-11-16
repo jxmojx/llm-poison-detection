@@ -15,7 +15,7 @@
 | 中文用 `text.split()` 算 KL | 不分词 → 退化为整句比对，阈值 0.5 无意义 | 句向量 + 距离/密度检测；阈值按**目标误报率**校准 |
 | 只有 accuracy | 极不均衡任务，"全判正常"就有 99% | AUROC / AUPRC / **TPR@FPR=1%** / 分家族召回 / OOD 误报 / Bootstrap CI / McNemar |
 | `IsolationForest` 从未 `fit` | 直接 `predict` 必抛异常 | 真正实现并纳入对比 |
-| 862 行文件里 90% 是死代码 | `python network.py` 零输出退出 | 15 个模块约 3700 行、单一职责，11 个子命令 |
+| 862 行文件里 90% 是死代码 | `python network.py` 零输出退出 | 36 个模块约 12900 行、单一职责，29 个子命令 |
 
 ---
 
@@ -72,6 +72,7 @@ python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob -
 python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob --limit 40 --gate sup_tfidf
 python -m poisonguard.cli distill $V3    # 判官 → 毫秒级学生模型
 python -m poisonguard.cli struct-train $V3 --qwen-model 0.5b   # 结构隔离判官（A1）：冻结主干+二分类头，判官不解析指令（环节 18）
+python -m poisonguard.cli inject-train --qwen-model 0.5b --out outputs/metrics/inject.json   # P3 注入头（环节 30）：8 类载荷 seen/unseen 双列指标
 python -m poisonguard.cli conformal $V3  # 保形预测（A2）：把「1% FPR」变成有限样本保证（环节 19，0.1s）
 python -m poisonguard.cli attack-study $V3 --method mix --qwen-model 0.5b   # 强攻击压测（A3）：零宽/同形/全角/回译/GCG（环节 20）
 python -m poisonguard.cli ranker $V3      # 学生排序器受控对比（A5）：6 特征变体 × teacher/真标签（环节 21）
@@ -88,7 +89,7 @@ python -m poisonguard.cli judge  $V3 --qwen-model 0.5b --judge-scoring logprob -
 python -m poisonguard.cli report  $V3    # → docs/实验报告_real_v3.md
 python -m poisonguard.cli serve   $V3 --port 8000   # FastAPI: /health /score /stats
 python -m poisonguard.cli doctor                     # 环境自检（换机器先跑这个）
-python -m pytest tests/ -q                           # 164 项测试（data/detect/judge/distill/serve/scan/deploy/ingest/review/feedback/redteam-sanitize/evade/struct/conformal/strongattack/ranker）
+python -m pytest tests/ -q                           # 250 项测试（data/detect/judge/distill/serve/scan/deploy/ingest/review/feedback/redteam-sanitize/evade/struct/conformal/strongattack/ranker/inject/explain/mcp/http）
 ```
 
 `make` 里已经固化了这套：`make data|detect|judge|distill|struct-train|conformal|attack-study|ranker|keygen|smoke|ingest|review|feedback|redteam|report|serve|test|doctor`。
@@ -165,7 +166,42 @@ python -m poisonguard.cli run --bundle outputs/deploy/poisonguard-afqmc.pkg \\
 **关键机制发现（对落地方向最有价值）**：词面法对"内容级篡改"的抓取能力不是常数，而是**句长/信息密度的函数**——afqmc 平均 13 字，单点编辑会改掉句子里高权重的字符 n-gram（如「借呗/先息/等额」），sup_tfidf 对 edit 召回直接到 0.674；iflytek 289 字长句，单点替换淹没在几百个 n-gram 里（0.014）。→ **RAG 碎片 / QA / 评论等短文本域，词面法就够强；长文档域必须依赖语义判官层**。完整数字见 [`docs/实验报告_iflytek.md`](docs/实验报告_iflytek.md) 与 [`docs/实验报告_afqmc.md`](docs/实验报告_afqmc.md)。
 
 产物：`outputs/metrics/*.json`（机器可读）、`outputs/figures/*.png`（ROC/热力图/消融曲线/蒸馏对比）、`docs/实验报告.md`。
-**整体架构、模块职责与下一步优化清单见 [`docs/架构总览.md`](docs/架构总览.md)**；改造过程与验收标准见 [`docs/优化环节清单.md`](docs/优化环节清单.md)，简历表述见 [`docs/简历项目描述.md`](docs/简历项目描述.md)，**落地方向与"第一刀"选择见 [`docs/落地方向.md`](docs/落地方向.md)**。
+**整体架构、模块职责与下一步优化清单见 [`docs/架构总览.md`](docs/架构总览.md)**；改造过程与验收标准见 [`docs/优化环节清单.md`](docs/优化环节清单.md)，简历表述见 [`docs/简历项目描述.md`](docs/简历项目描述.md)，**落地方向与"第一刀"选择见 [`docs/落地方向.md`](docs/落地方向.md)**，**Agent/MCP 接入见 [`docs/MCP接入说明.md`](docs/MCP接入说明.md)**。
+
+---
+
+## Agent/MCP 接入（环节 30）：判官从「命令」变成「可调工具」
+
+poisonguard 通过 **MCP（Model Context Protocol）** 暴露为 Agent 可调的工具服务器。
+支持 MCP 的宿主（Claude Desktop / DSH / Cursor 等）可以直接调 **7 个工具**：
+
+```bash
+# 0) P3 注入头（可选，但强烈建议先跑）：8 类注入载荷 seen/unseen 双列指标
+#    冻结 Qwen 0.5B 主干 mean-pool 896d + LogReg 头（CPU 约 195s）
+python -m poisonguard.cli inject-train --qwen-model 0.5b --out outputs/metrics/inject.json
+
+# 1) stdio 直连（默认传输，客户端用 .mcp.json.example 配 mcpServers 即可）
+python -m poisonguard.mcp
+
+# 2) HTTP + SSE 传输（可跨机；token 走 env POISONGUARD_MCP_TOKEN）
+python -m poisonguard.cli mcp --http --port 8011 --token <tok>
+curl http://127.0.0.1:8011/health      # 免认证健康检查
+curl -X POST http://127.0.0.1:8011/mcp -H "Authorization: Bearer <tok>" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl -N http://127.0.0.1:8011/mcp       # SSE：event:endpoint → data:/mcp → 心跳
+
+# 3) 端到端 demo：stdio StringIO 直连，全链路一条命令跑完（无网络）
+PYTHONIOENCODING=utf-8 python scripts/demo_mcp.py
+```
+
+- **7 个工具**：`guard_text` / `guard_batch`（守卫，默认带中文可解释字段）、`explain`（离线因果链）、
+  `read_alert`（按 key 读人审告警）、`review_queue` / `record_decision`（人审闭环 C4）、`ingest_file`（入库门禁）。
+- **resources/prompts 子集**：`resources/list|read`（guard/policy、metrics/inject、server/status）+ `prompts/list|get`（守卫提示模板）。
+- **鉴权**：`Server(auth_token=…)` 默认读 `POISONGUARD_MCP_TOKEN`；stdio 会话在 `initialize` 校验
+  `authorization: Bearer`，未认证调用一律 `-32001`；HTTP 走 Bearer → 401。
+- **优雅降级**：splits/模型缺失时 gate/ingest 降级为规则层（`_RuleOnlyScorer`），守卫仍返回 watch/allow 而不崩门。
+- **注入头（P3）实测**：seen AUROC/AUPRC/TPR@1%/F1 = 1.0，unseen 同样 1.0（更严格），family_recall 全 1.0，
+  threshold_devcal=0.0007；产物 `outputs/metrics/inject_head.pkl` + `inject.json`。
 
 ---
 
@@ -328,7 +364,7 @@ poisonguard/            新实现（可 pip 安装的包）
   train_qwen_lora.py     QLoRA 微调判官（手写训练循环，少依赖）
   evaluate.py            指标 + 图表
   report.py              自动生成 Markdown 报告
-  cli.py                 11 个子命令
+  cli.py                 29 个子命令（含 struct-train / inject-train / mcp / serve / scan / deploy / run / v3 全链路）
 
 configs/default.yaml
 data/raw/                原始 CSV + CLUE/tnews 真实新闻
@@ -385,7 +421,7 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 - `outputs/metrics/*.json` 里记录 `encoder / target_fpr / n_train / n_dev / n_test / timestamp`，报告由脚本生成而非手抄
 - v3 起每条指标另带 `provenance`：`git_sha / git_dirty / python / platform / seed / clean_source / edit_family / n_hardneg / qwen / config_hash / 依赖版本`
 - 严格口径开关：`--style-holdout`（dev/test 用互不相交的模板骨架）、`--clean-source tnews`（干净侧换真实新闻）、`--run-tag v3`（产物加后缀，与旧口径并存）
-- 164 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式、ed25519 往返/篡改拒绝、tiny 编码器确定性、入库三档边界/sha 幂等/row_id 保留、人审队列去重/upsert/非法理由拒绝/HTTP 契约、误报率 Wilson 区间/影子阈值/回放召回代价、阈值标定分位/单调/来源优先级、数字抽取/融合 z-score/覆盖率、PASS 抽样确定性/漏报率区间、日志单行 JSON/级别生效/setup 幂等**（164 项全绿，覆盖率地板 40%）
+- 250 项 pytest 守住最容易退化的不变量：**攻击家族不含关键词、dev/test 攻击串不相交、模板两折不相交且并集覆盖全表、校准命中目标 FPR、OOF 分数诚实、指标实现正确、ModelScope 目录名转义、最小篡改只改一处、级联召回单调且满预算等于判官召回、低预算优于同预算随机、学生模型 AUROC>0.9 且 <50ms、服务端 400/413/200、dev 校准列只用校准集定阈、ECE 边界（完美=0/反向=1）、加固 prompt 中和自带分隔符、注入语料形状、脱敏对正常文本恒等且剥离指令词、逃避变换保事实载体/确定性/长度护栏、结构隔离头可训/打分单调/校准边界、保形阈值顺序统计量/上界≤α/α单调/hold-out 误报贴近 α、零宽不改可见文本/字符 n-gram 余弦显著下降/全角 1:1、排序器 6 变体可训/stack=均值/富集公式、ed25519 往返/篡改拒绝、tiny 编码器确定性、入库三档边界/sha 幂等/row_id 保留、人审队列去重/upsert/非法理由拒绝/HTTP 契约、误报率 Wilson 区间/影子阈值/回放召回代价、阈值标定分位/单调/来源优先级、数字抽取/融合 z-score/覆盖率、PASS 抽样确定性/漏报率区间、日志单行 JSON/级别生效/setup 幂等、注入头可训/打分单调/校准边界/seen-unseen 双列、MCP 协议/资源/提示/鉴权/降级/HTTP-SSE、explain 纯逻辑、gate 优雅降级、demo 全链路**（250 项全绿，覆盖率地板 40%）
 - 两列 TPR@1% 都报：`tpr_at_fpr1`（在 test 上找阈值，乐观上界）与 `tpr_at_fpr1_devcal`（阈值只由 dev 定，报告用这一列）。v3 实测 sup_tfidf 两列相等（0.808）、sup_lr 从 0.371 升到 0.469 —— 阈值调优不是虚高的主要来源。
 - `doctor` 子命令做环境自检（13 个依赖 + 编码器/数据/权重路径），换机器第一件事就跑它
 - **场景四完整复现（学生排序 TopK → LLM 判官精判）**：本机已有产物的快速路径（约 10 秒）、干净机器全量 6 步、预期输出与产物位置见 [`docs/复现步骤.md`](docs/复现步骤.md)，复现脚本为 [`examples/repro_scene4.py`](examples/repro_scene4.py)
