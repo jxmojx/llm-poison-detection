@@ -192,6 +192,45 @@ class IngestLedger:
         out.update({str(k): int(v) for k, v in rows})
         return out
 
+    # ---------------- 合规查询（环节 30-3 审计导出用） ----------------
+    def files_meta(self) -> list[dict]:
+        """所有文件的台账元数据行（按开始时间排序），供合规报告汇总。"""
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT file_sha, path, n_rows, status, model, pkg_sha, threshold,"
+                "       started_at, finished_at FROM files ORDER BY started_at"
+            ).fetchall()
+        return [
+            {
+                "file_sha": str(r[0]), "path": str(r[1]), "n_rows": int(r[2]),
+                "status": str(r[3]), "model": str(r[4]), "pkg_sha": str(r[5]),
+                "threshold": float(r[6]) if r[6] is not None else 0.0,
+                "started_at": float(r[7]) if r[7] is not None else 0.0,
+                "finished_at": float(r[8]) if r[8] is not None else 0.0,
+            }
+            for r in rows
+        ]
+
+    def records_range(self, *, since: float = 0.0, until: float = 1e18) -> list[dict]:
+        """时间段内的行级判决记录（decided_at 落在 [since, until)），供审计报告回查。
+
+        返回按 file_sha, row_id 排序的 [{file_sha,row_id,text_sha,score,flag,decided_at}]。
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT file_sha, row_id, text_sha, score, flag, decided_at"
+                " FROM records WHERE decided_at>=? AND decided_at<?"
+                " ORDER BY file_sha, row_id",
+                (float(since), float(until)),
+            ).fetchall()
+        return [
+            {
+                "file_sha": str(r[0]), "row_id": int(r[1]), "text_sha": str(r[2]),
+                "score": float(r[3]), "flag": str(r[4]), "decided_at": float(r[5]),
+            }
+            for r in rows
+        ]
+
     def progress(self, sha: str, n_rows: int) -> None:
         """处理进行中把「已处理行数」写回台账（status 仍为 running，可追踪进度）。"""
         with self._conn() as c:

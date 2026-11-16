@@ -1033,6 +1033,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("judge", "语义层检测(Qwen 判官)"),
         ("ablation", "投毒比例消融"),
         ("audit", "词面审计(检测器在抓有害性还是'没见过这种句式')"),
+        ("audit-log", "合规审计导出: 把清洗台账导成可审计报告(环节30-3)"),
         ("hardneg", "硬负样本压力测试(攻击 vs 同样像传闻的无害新闻)"),
         ("distill", "判官蒸馏为毫秒级学生模型(降本环节)"),
         ("distill-adapt", "域适配增量训练：在旧学生上冻结旧域参数、增量拟合新域(环节30-2)"),
@@ -1237,6 +1238,21 @@ def build_parser() -> argparse.ArgumentParser:
                            help="单轮最多处理多少个文件(0=不限)")
             p.add_argument("--no-explain", dest="no_explain", action="store_true",
                            help="不记录各视图分数（省体积）")
+        if name == "audit-log":
+            p.add_argument("--ledger", default=None,
+                           help="台账 sqlite 路径（默认 outputs/ingest/ledger.sqlite3）")
+            p.add_argument("--out-dir", dest="out_dir", default=None,
+                           help="报告输出目录（默认 outputs/compliance）")
+            p.add_argument("--since", type=float, default=0.0,
+                           help="只导出 decided_at>=since（epoch 秒；0=不限）")
+            p.add_argument("--until", type=float, default=0.0,
+                           help="只导出 decided_at<until（epoch 秒；0=不限）")
+            p.add_argument("--no-md", dest="render_md", action="store_false", default=True,
+                           help="不生成人读 md 报告")
+            p.add_argument("--with-csv", dest="render_csv", action="store_true", default=False,
+                           help="额外生成行级 csv 明细")
+            p.add_argument("--limit-examples", dest="limit_examples", type=int, default=20,
+                           help="md 报告 BLOCK 样例上限")
         if name == "scan":
             p.add_argument("--input", required=True,
                            help="待扫描文件：txt(一行一句) / csv / tsv / jsonl")
@@ -1429,6 +1445,23 @@ def main(argv: list[str] | None = None) -> int:
         from .audit import lexical_audit
 
         lexical_audit(cfg, _metrics_path(cfg, "lexical_audit.json"))
+    elif args.cmd == "audit-log":
+        from .compliance import export_compliance
+
+        ledger = getattr(args, "ledger", None) or str(
+            Path(cfg.outputs_dir) / "ingest" / "ledger.sqlite3")
+        until = float(getattr(args, "until", 0.0) or 0.0)
+        since = float(getattr(args, "since", 0.0) or 0.0)
+        export_compliance(
+            ledger,
+            getattr(args, "out_dir", None),
+            since=since,
+            until=until if until > 0 else 0.0,
+            render_md=bool(getattr(args, "render_md", True)),
+            render_csv=bool(getattr(args, "render_csv", False)),
+            limit_examples=int(getattr(args, "limit_examples", 20)),
+            cfg=cfg,
+        )
     elif args.cmd == "hardneg":
         from .hardneg import hard_negative_probe
 
