@@ -167,6 +167,31 @@ python -m poisonguard.cli run --bundle outputs/deploy/poisonguard-afqmc.pkg \\
 产物：`outputs/metrics/*.json`（机器可读）、`outputs/figures/*.png`（ROC/热力图/消融曲线/蒸馏对比）、`docs/实验报告.md`。
 **整体架构、模块职责与下一步优化清单见 [`docs/架构总览.md`](docs/架构总览.md)**；改造过程与验收标准见 [`docs/优化环节清单.md`](docs/优化环节清单.md)，简历表述见 [`docs/简历项目描述.md`](docs/简历项目描述.md)，**落地方向与"第一刀"选择见 [`docs/落地方向.md`](docs/落地方向.md)**。
 
+### 清洗流水线工程化（环节 30 五件套）：断点续跑 · 域适配 · 合规审计 · 多数据源 · 客户工作点
+
+面向"清洗每天跑、审计能追溯、客户口径可调"的生产要求，`ingest` / `scan` / `distill` 补齐五块：
+
+```bash
+# 1) 断点续跑：行级台账去重 + 分块落盘，中断后 --resume 只补没打分的行（幂等，进度可追踪）
+python -m poisonguard.cli ingest --file data/inbox/x.txt --flush-every 512 --resume
+# 2) 域适配增量：在旧域学生上冻结旧域参数、新增"新域专家头"（blend 打分，不灾难遗忘）
+python -m poisonguard.cli distill-adapt --student outputs/metrics/student_judge.pkl \
+    --adapt-dev outputs/metrics/judge_samples_dev.jsonl --domain 金融
+# 3) 合规审计导出：把清洗台账按批次/时间窗导成可审计报告（JSON/MD/CSV，含模型版本与判定依据）
+python -m poisonguard.cli audit-log --until 0 --with-csv
+# 4) 多数据源 adapter：scan 可直接吃 HF datasets / DVC 文件 / S3 对象（统一"每行一条文本"语义）
+python -m poisonguard.cli scan --source hf://zh_daily/whole_sentence["train"] --limit 1000
+python -m poisonguard.cli scan --source s3://my-bucket/batch_2026.txt
+# 5) 按客户调优工作点：target_fpr 参数化标定一组阈值，报告决策表（FPR vs 估计召回）
+python -m poisonguard.cli workpoint --fprs 0.001,0.01,0.05 --label 客户A --poison-file data/poison_sample.txt
+```
+
+- **断点续跑**：`IngestLedger`（sqlite）逐行记 `(file_sha, row_id, text_sha, score, flag)`；`--flush-every` 控制每多少行落一次台账（崩溃只丢一个块）；`--resume` 只对 `running` 状态且台账缺失的行补打分，全在台账则直接 `resumed` 跳过——**整文件重跑与续跑结果一致**（PK 幂等）。
+- **域适配增量**：`fit_incremental` 冻结旧域 `vec/scaler/旧分类头`，仅新增一个新域线性专家头，打分 `gamma*旧 + (1-gamma)*新`（gamma 越大越保守）。旧域 AUROC 不掉、新域单独提升；产物 `student_judge.adapt.pkl` + `adapt.json`（新旧域 AUC / 每样本耗时）。
+- **合规审计**：`audit-log` 把台账 `files`+`records` 按时间窗导出 `compliance_<时间戳>.json`（含 `pkg_sha` 模型版本 / 分文件清单 / 全部判定）+ `.md`（总览表 + BLOCK 样例句）+ 可选 `.csv`（utf-8-sig）。审计口径：`since/until` 为 epoch 秒，`until<=0` 表示无上限。
+- **多数据源**：`scan --source` 三种前缀——`hf://repo[/split]`（datasets）、`dvc://path[@rev]`、`s3://bucket/key`；未装 `datasets/dvc/boto3` 时按需报错的友好提示。远程内容统一按"每行一条文本"解析（txt 语义），`limit` 截断。
+- **客户工作点**：`workpoint` 在一组 `target_fpr`（0.001/0.005/0.01/0.02/0.05）上逐点标定阈值，同一份 dev 干净样本 + 可选毒样本估计召回，产出 `workpoints_<label>_<时间戳>.json/.md/.csv` 决策表（含 `score_mean_clean` / `est_recall_on_poison`）；阈值越高拦得越严——落到客户侧前需结合合规口径授权。
+
 ---
 
 ## 架构：三层，每层解决上一层的盲区
@@ -341,6 +366,10 @@ tests/test_pipeline.py   8 条不变量冒烟测试
 tests/test_v3.py         v3 新增环节的行为契约测试（含 test_pipeline.py / test_scan.py / test_deploy.py）
 poisonguard/distill.py   判官蒸馏（软标签 → 毫秒级学生模型）
 poisonguard/service.py   FastAPI 在线打分（/health /score /stats）
+poisonguard/ingest.py    清洗流水线：行级台账（sqlite，断点续跑）+ 分档落盘
+poisonguard/compliance.py  合规审计导出（台账 → 可审计 JSON/MD/CSV 报告）
+poisonguard/datasource.py  多数据源 adapter（hf:// / dvc:// / s3://）
+poisonguard/workpoint.py   客户工作点调优（target_fpr 参数化 + 决策报告）
 ```
 
 ---
