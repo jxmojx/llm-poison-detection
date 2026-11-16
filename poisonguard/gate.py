@@ -199,8 +199,23 @@ class Gate:
                                         target_fpr=self.gate_cfg.target_fpr)
                 self.threshold = float(res["threshold"])
                 self.threshold_source = res["source"]
+        except Exception as exc:
+            # 装配失败（splits 缺失 / 模型缺失 / 编码器异常）：优雅降级为
+            # "只跑 L0 规则层"。这样 MCP stdio/HTTP 服务在没预构建数据集时
+            # 依然能给出规则级判定，而不是整扇门崩掉。
+            self._no_scorer = True
+            self._scorer = None
+            self._scorer_loading = False
+            try:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "打分器装配失败，降级为规则层：%s", exc)
+            except Exception:
+                pass
+            return None
         finally:
             self._scorer_loading = False
+        return self._scorer
 
     def _block_threshold(self) -> float:
         """"分数 ≥ block_thr 才 block"：由目标 FPR 的干净分数上界 × block_mult。

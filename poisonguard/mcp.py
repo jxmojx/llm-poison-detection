@@ -221,16 +221,50 @@ def _guard_one(gate, text: str, scene: str = "prompt", explain: bool = True) -> 
 
 def _review_store(cfg: Config, db: str | None = None) -> Any:
     from .review import ReviewStore
-    path = db or str(Path(cfg.out_dir) / "ingest" / "review.sqlite3")
+    base = getattr(cfg, "outputs_dir", None) or "outputs"
+    path = db or str(Path(base) / "ingest" / "review.sqlite3")
     return ReviewStore(path)
+
+
+class _RuleOnlyScorer:
+    """build_scorer 失败（splits/模型缺失）时的降级打分器：只跑 L0 规则层。
+
+    与 Ingestor 的接口契约一致：有 `.score(texts, explain=False)` 与
+    `.threshold` / `.version`。命中规则词 → score=1.0（进 BLOCK/WATCH），
+    否则 0.0。这让 ingest_file 在没有预构建数据集时也能完成"文件 → 判决"
+    闭环，而不是整扇门崩掉。
+    """
+
+    threshold = 0.5
+    version = "rule_only"
+    model = "rule_only"
+
+    def score(self, texts, explain=False):
+        from .gate import _rule_hits
+
+        results = []
+        for t in texts:
+            hits = _rule_hits(t)
+            score = 1.0 if hits else 0.0
+            rec = {"score": score}
+            if explain:
+                rec["views"] = {"rule_hits": hits}
+            results.append(rec)
+        return {"results": results, "threshold": self.threshold}
 
 
 def _ingestor(cfg: Config, out_dir: str | None = None, ledger_dir: str | None = None,
               watch_band: float = 0.05) -> Any:
-    """懒装配 Ingestor；scorer 只缺省（调用方不传 bundle 时用默认 build_scorer）。"""
+    """懒装配 Ingestor；scorer 构建失败时降级为规则层（L0）。
+
+    这样 MCP stdio/HTTP 服务在没预构建 splits/模型时仍能完成 ingest 闭环。
+    """
     from .ingest import Ingestor
-    from .service import build_scorer
-    scorer = build_scorer(cfg)
+    try:
+        from .service import build_scorer
+        scorer = build_scorer(cfg)
+    except Exception:
+        scorer = _RuleOnlyScorer()
     return Ingestor(
         scorer,
         out_dir=out_dir or "outputs/ingest",
