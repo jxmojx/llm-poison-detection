@@ -1008,6 +1008,9 @@ ARG_DEFAULTS = {
     "calibrate": True, "sample_pass": 0, "db": None, "host": "127.0.0.1", "port": 8077,
     "target_fpr": 0.01, "detector": "sup_tfidf", "mode": "pooled",
     "min_support": 30, "corpus_dir": "outputs/feedback", "report": "docs/运维日报.md",
+    "scene": "prompt", "gfile": None, "http": False, "no_scorer": False,
+    "gthreshold": None, "block_mult": 2.0,
+
     "inbox": "data/inbox", "files": [], "pattern": "*.txt,*.csv,*.tsv,*.jsonl,*.json",
     "fmt": "auto", "column": "text", "limit": 0, "watch_band": 0.05,
     "threshold": None, "bundle": None, "verify_ed25519": None,
@@ -1039,6 +1042,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("ingest", "入库钩子(C2)：投递目录 → 自动打分 → 隔离/人审/放行 + 判决台账"),
         ("factcheck", "数字级事实校验(P0-2)：数字位置的模型先验 → 抓内容级篡改"),
         ("feedback", "误报闭环(C4)：人审判定 → 在线FPR/影子阈值/难负样本语料"),
+        ("gate", "输入闸门(输入侧/检索/工具输出 → allow/watch/block)"),
         ("review", "人审台(C1)：BLOCK/WATCH 队列 → 判定 + 理由码落库"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
@@ -1143,6 +1147,22 @@ def build_parser() -> argparse.ArgumentParser:
                            help="难负样本/确认正例的导出目录")
             p.add_argument("--report", default="docs/运维日报.md",
                            help="日报 markdown 输出路径")
+        if name == "gate":
+            p.add_argument("--text", default=None, help="单条文本（给了就走 in-process）")
+            p.add_argument("--scene", default="prompt",
+                           choices=("prompt", "retrieval", "tool_output"),
+                           help="场景：prompt/检索结果/工具输出（tool_output 最严）")
+            p.add_argument("--file", dest="gfile", default=None,
+                           help="逐行读文件并对每行 guard（留痕 CSV / JSONL）")
+            p.add_argument("--http", action="store_true", help="起 HTTP 服务 POST /guard")
+            p.add_argument("--host", default="127.0.0.1")
+            p.add_argument("--port", type=int, default=8010)
+            p.add_argument("--no-scorer", dest="no_scorer", action="store_true",
+                           help="不装配语料打分器（只跑规则层，快；无数据时自动退化）")
+            p.add_argument("--threshold", dest="gthreshold", type=float, default=None,
+                           help="显式给出 watch 分界阈值")
+            p.add_argument("--block-mult", dest="block_mult", type=float, default=2.0,
+                           help="block 阈值 = watch 阈值 × 该倍数")
         if name == "review":
             p.add_argument("--out-dir", dest="out_dir", default="outputs/ingest",
                            help="ingest 产物目录（读 quarantine/ 与 review/）")
@@ -1458,6 +1478,55 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[feedback] 已判 {res['n_decided']} 条：误报 {r['n_fp']}/{r['n_blocked']} "
               f"= {r['fp_rate']:.2%}  告警={res['alarm']['status']}")
         print(f"[feedback] {res['alarm']['message']}")
+    elif args.cmd == "gate":
+        from .gate import Gate, GateConfig, guard_texts, serve_http
+
+        import poisonguard.gate as _g
+
+        gate_cfg = GateConfig.from_cfg(
+            cfg,
+            threshold=getattr(args, "gthreshold", None),
+            block_mult=float(getattr(args, "block_mult", 2.0) or 2.0),
+            cache_dir=str(cfg.encoder.cache_dir or "outputs/cache"),
+        )
+        if getattr(args, "http", False):
+            gate = Gate(cfg, gate_cfg)
+            serve_http(gate, host=getattr(args, "host", "127.0.0.1"),
+                       port=int(getattr(args, "port", 8010) or 8010))
+            raise SystemExit(0)
+
+        text = getattr(args, "text", None)
+        gfile = getattr(args, "gfile", None)
+        scene = getattr(args, "scene", "prompt")
+        gate = Gate(cfg, gate_cfg)
+        if getattr(args, "no_scorer", False):
+            gate._no_scorer = True
+        if text:
+            r = gate.guard(text, scene=scene)
+            print(_g.json.dumps(r.as_dict(text=True), ensure_ascii=False, indent=2))
+        elif gfile:
+            import csv
+            import datetime as _dt
+            rows = [ln.rstrip("\n") for ln in Path(gfile).read_text(
+                encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+            results = [gate.guard(t, scene=scene).as_dict(text=False)
+                       for t in rows]
+            stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            out = Path("outputs") / "gate" / f"gate_{stamp}.csv"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with out.open("w", newline="", encoding="utf-8-sig") as f:
+                w = csv.writer(f)
+                w.writerow(["text", "verdict", "score", "threshold",
+                            "rules_hit", "scene", "budget_ms"])
+                for t, r in zip(rows, results):
+                    w.writerow([t, r["verdict"], r["score"], r["threshold"],
+                                "|".join(r["rules_hit"]), r["scene"], r["budget_ms"]])
+            print(f"[gate] {len(rows)} 条 -> {out}")
+            from collections import Counter
+            print("[gate] 分布:", dict(Counter(r["verdict"] for r in results)))
+        else:
+            print("用法：gate --text 文本 | gate --file lines.txt | gate --http")
+            raise SystemExit(1)
     elif args.cmd == "review":
         from .review import create_review_app
 
