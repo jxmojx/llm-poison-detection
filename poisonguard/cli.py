@@ -1005,6 +1005,7 @@ ARG_DEFAULTS = {
     "sign_key_file": None,
     "require_signature": False,
     "fact_model": "Qwen/Qwen2.5-0.5B-Instruct", "fact_limit": 400, "fact_seed": 42,
+    "rc_topk": 5, "rc_min_ratio": 0.75, "rc_corpus": "train", "rc_limit": 400, "rc_seed": 42,
     "calibrate": True, "sample_pass": 0, "db": None, "host": "127.0.0.1", "port": 8077,
     "target_fpr": 0.01, "detector": "sup_tfidf", "mode": "pooled",
     "min_support": 30, "corpus_dir": "outputs/feedback", "report": "docs/运维日报.md",
@@ -1041,6 +1042,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
         ("ingest", "入库钩子(C2)：投递目录 → 自动打分 → 隔离/人审/放行 + 判决台账"),
         ("factcheck", "数字级事实校验(P0-2)：数字位置的模型先验 → 抓内容级篡改"),
+        ("ragcheck", "检索式事实核验(P0-2 升级)：拆分事实点→参考语料检索→一致性核验（需先跑 data）"),
         ("feedback", "误报闭环(C4)：人审判定 → 在线FPR/影子阈值/难负样本语料"),
         ("gate", "输入闸门(输入侧/检索/工具输出 → allow/watch/block)"),
         ("mcp", "MCP 服务(P2)：stdio JSON-RPC，Agent 可调 guard/review/ingest"),
@@ -1133,6 +1135,16 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--fact-limit", dest="fact_limit", type=int, default=400,
                            help="每个家族抽样条数(0=全量；全量约 20-25 分钟)")
             p.add_argument("--fact-seed", dest="fact_seed", type=int, default=42)
+        if name == "ragcheck":
+            p.add_argument("--rc-topk", dest="rc_topk", type=int, default=5,
+                           help="检索一致性核验的最近邻条数(默认 5)")
+            p.add_argument("--rc-min-ratio", dest="rc_min_ratio", type=float, default=0.75,
+                           help="近重复判定阈值：检索片段与参考片段的最小相似比")
+            p.add_argument("--rc-corpus", dest="rc_corpus", default="train",
+                           help="参考语料来源切分：train / dev / test / train+dev（默认 train 的 normal 句）")
+            p.add_argument("--rc-limit", dest="rc_limit", type=int, default=400,
+                           help="每个家族抽样条数(0=全量)")
+            p.add_argument("--rc-seed", dest="rc_seed", type=int, default=42)
         if name == "feedback":
             p.add_argument("--db", default="outputs/ingest/review.sqlite3",
                            help="人审判决库（review 产出）")
@@ -1455,6 +1467,16 @@ def main(argv: list[str] | None = None) -> int:
                       model_id=getattr(args, "fact_model", None),
                       limit=int(getattr(args, "fact_limit", 0) or 0),
                       seed=int(getattr(args, "fact_seed", 42) or 42))
+    elif args.cmd == "ragcheck":
+        from .ragcheck import run_ragcheck
+
+        run_ragcheck(cfg, out_path=_metrics_path(cfg, "ragcheck.json"),
+                     encoder_name=getattr(args, "encoder", None),
+                     top_k=int(getattr(args, "rc_topk", 5) or 5),
+                     min_ratio=float(getattr(args, "rc_min_ratio", 0.75) or 0.75),
+                     corpus_source=getattr(args, "rc_corpus", "train"),
+                     limit=int(getattr(args, "rc_limit", 0) or 0),
+                     seed=int(getattr(args, "rc_seed", 42) or 42))
     elif args.cmd == "feedback":
         from .data import load_splits
         from .feedback import run_feedback

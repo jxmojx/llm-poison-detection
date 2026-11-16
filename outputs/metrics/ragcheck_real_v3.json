@@ -1,0 +1,120 @@
+{
+  "meta": {
+    "method": "retrieval-consistency",
+    "encoder": "crom",
+    "corpus_source": "train",
+    "corpus_n": 12000,
+    "top_k": 5,
+    "min_ratio": 0.75,
+    "limit": 400,
+    "seed": 42,
+    "n_dev_clean": 2000,
+    "n_test": 2953,
+    "seconds": 487.3,
+    "note": "分数=检索一致性冲突(0..1)：近重复且差异块含事实点。与 factcheck.py 数字级（无条件先验, AUROC 0.353）形成「有知识库 vs 无知识库」对照。"
+  },
+  "overall": {
+    "auroc": 0.5532269150052467,
+    "tpr_at_fpr1": 0.1085,
+    "n_evaluated": 2953,
+    "n_with_conflict": 219,
+    "edit_norm_auroc": 0.7690625
+  },
+  "by_family": {
+    "backdoor": {
+      "n": 400,
+      "mean_score": 0.0,
+      "max_score": 0.0
+    },
+    "edit": {
+      "n": 400,
+      "mean_score": 0.5069,
+      "max_score": 0.9873
+    },
+    "hardneg": {
+      "n": 153,
+      "mean_score": 0.0,
+      "max_score": 0.0
+    },
+    "normal": {
+      "n": 400,
+      "mean_score": 0.0044,
+      "max_score": 0.9634
+    },
+    "ood": {
+      "n": 400,
+      "mean_score": 0.0,
+      "max_score": 0.0
+    },
+    "paraphrase": {
+      "n": 400,
+      "mean_score": 0.0,
+      "max_score": 0.0
+    },
+    "subtle": {
+      "n": 400,
+      "mean_score": 0.0,
+      "max_score": 0.0
+    },
+    "template": {
+      "n": 400,
+      "mean_score": 0.0,
+      "max_score": 0.0
+    }
+  },
+  "baseline_numeric_level": {
+    "auroc": 0.35301362463613933,
+    "tpr_at_fpr1": 0.0005589714924538849,
+    "by_family": {
+      "backdoor": {
+        "n": 400,
+        "n_with_number": 400,
+        "coverage": 1.0,
+        "mean_susp": 5.659441566045862
+      },
+      "edit": {
+        "n": 400,
+        "n_with_number": 381,
+        "coverage": 0.9525,
+        "mean_susp": 4.814250803807399
+      },
+      "hardneg": {
+        "n": 153,
+        "n_with_number": 127,
+        "coverage": 0.8300653594771242,
+        "mean_susp": 6.02489899028474
+      },
+      "normal": {
+        "n": 400,
+        "n_with_number": 288,
+        "coverage": 0.72,
+        "mean_susp": 5.342888632234665
+      },
+      "ood": {
+        "n": 400,
+        "n_with_number": 298,
+        "coverage": 0.745,
+        "mean_susp": 8.56539071086269
+      },
+      "paraphrase": {
+        "n": 400,
+        "n_with_number": 284,
+        "coverage": 0.71,
+        "mean_susp": 6.344815714048668
+      },
+      "subtle": {
+        "n": 400,
+        "n_with_number": 400,
+        "coverage": 1.0,
+        "mean_susp": 3.737264250740409
+      },
+      "template": {
+        "n": 400,
+        "n_with_number": 324,
+        "coverage": 0.81,
+        "mean_susp": 5.71894923866623
+      }
+    }
+  },
+  "fusion_with_sup_tfidf": null
+}
