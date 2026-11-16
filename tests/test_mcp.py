@@ -48,13 +48,13 @@ def test_ping_returns_empty_result():
 # ----------------------------------------------------------------------
 # tools/list
 # ----------------------------------------------------------------------
-def test_tools_list_exposes_five_tools_with_schema():
+def test_tools_list_exposes_tools_with_schema():
     s = Server()
     r = call(s, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     tools = r["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert names == ["guard_text", "guard_batch", "review_queue",
-                     "record_decision", "ingest_file"]
+    assert names == ["guard_text", "guard_batch", "explain", "read_alert",
+                     "review_queue", "record_decision", "ingest_file"]
     for t in tools:
         assert "description" in t and "inputSchema" in t
     # guard_text 的 schema 声明 text 必填
@@ -104,6 +104,60 @@ def test_call_unknown_tool_is_method_not_found():
                  "params": {"name": "no_such_tool", "arguments": {}}})
     assert r["error"]["code"] == -32601
     assert "no_such_tool" in r["error"]["message"]
+
+
+# ----------------------------------------------------------------------
+# Gap 2：explain / read_alert（纯逻辑，不触发模型加载）
+# ----------------------------------------------------------------------
+def test_call_explain_requires_verdict():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                 "params": {"name": "explain",
+                            "arguments": {"result": {"score": 0.5}}}})
+    assert r["error"]["code"] == -32602
+    assert "verdict" in r["error"]["message"]
+
+
+def test_call_explain_returns_explanation():
+    s = Server()
+    result = {
+        "verdict": "block", "score": 0.9, "threshold": 0.3,
+        "scene": "prompt", "rules_hit": ["ignore"],
+        "signals": [{"name": "rule_injection", "score": 1.0, "detail": "ignore"}],
+        "budget_ms": 0.5, "judge_called": False, "explain": {
+            "effective_watch": 0.3, "effective_block": 0.6,
+            "block_headroom": 0.1, "threshold_source": "calibrated",
+            "target_fpr": 0.01, "watch_mult": 1.0, "block_mult": 1.2,
+            "views": {}, "sanitized": None,
+        },
+    }
+    r = call(s, {"jsonrpc": "2.0", "id": 11, "method": "tools/call",
+                 "params": {"name": "explain",
+                            "arguments": {"result": result}}})
+    assert "error" not in r
+    text = json.loads(r["result"]["content"][0]["text"])
+    assert text["explanation"]["verdict_cn"] == "拦截"
+    assert text["explained"]["verdict"] == "block"
+
+
+def test_call_read_alert_missing_key_is_param_error():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 12, "method": "tools/call",
+                 "params": {"name": "read_alert", "arguments": {}}})
+    assert r["error"]["code"] == -32602
+    assert "key" in r["error"]["message"]
+
+
+def test_call_read_alert_missing_alert_returns_found_false(tmp_path):
+    # tmp_path 为空 → 真实 read_alert 也查不到，验证 found=false 契约
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 13, "method": "tools/call",
+                 "params": {"name": "read_alert",
+                            "arguments": {"key": "nope|0|x", "out_dir": str(tmp_path)}}})
+    assert r["result"]["content"][0]["text"]  # json 化
+    payload = json.loads(r["result"]["content"][0]["text"])
+    assert payload["found"] is False
+    assert payload["key"] == "nope|0|x"
 
 
 # ----------------------------------------------------------------------

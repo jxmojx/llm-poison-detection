@@ -1,20 +1,25 @@
 # -*- coding: utf-8 -*-
-"""MCP 接入（P2）：把 poisonguard 暴露成 Agent 可调的 stdio JSON-RPC 服务。
+"""MCP 接入（P2+）：把 poisonguard 暴露成 Agent 可调的 stdio/HTTP JSON-RPC 服务。
 
 协议版本：MCP 2024-11-05 子集（initialize / notifications/initialized /
-tools/list / tools/call）。传输层用换行分隔 JSON（官方 stdio 传输）。
+tools/list / tools/call / resources/prompts（Gap 3））。传输层：stdio 用换行
+分隔 JSON；HTTP 用 /mcp（Streamable HTTP，Gap 5）。鉴权：token 可注入
+（Gap 4）。
 
-五个工具（对应 M2 方案）：
+工具（M2 方案 + Gap 2 可解释性）：
   - guard_text        单条文本 → verdict(allow/watch/block) + 信号 + 可解释
   - guard_batch       多条文本 → 逐条 verdict
+  - explain           对 guard 结果做脱机可读解释（verdict/原因/信号/处置）
+  - read_alert        按 key 读一条告警详情（含溯源视图）
   - review_queue      读人审队列（BLOCK/WATCH 未判决 Top-N + 统计）
   - record_decision   落一条人审判定（进 C4 闭环）
   - ingest_file       入库一份文件 → 三档统计
 
 设计约束：
   - 零第三方依赖（不引 MCP SDK），服务端状态全部懒装配（tools/list 不加载模型）。
-  - 每个工具都是对既有模块（gate / review / ingest）的薄封装——不复制业务逻辑。
-  - stdin/stdout 一次一个 JSON 行；顺序执行（Agent 并发不需要，保持简单确定）。
+  - 每个工具都是对既有模块（gate / review / ingest / explain）的薄封装——
+    不复制业务逻辑。
+  - stdio 一次一个 JSON 行；顺序执行（Agent 并发不需要，保持简单确定）。
 """
 
 from __future__ import annotations
@@ -61,12 +66,16 @@ class Tool:
     handler: Any
 
 
-def _guard_one(gate, text: str, scene: str = "prompt") -> dict:
+def _guard_one(gate, text: str, scene: str = "prompt", explain: bool = True) -> dict:
     from .gate import Gate
     if gate is None:
         raise MCPError(-32603, "gate 未初始化（服务器未装配）")
     r = gate.guard(text, scene=scene if scene in ("prompt", "retrieval", "tool_output") else "prompt")
-    return r.as_dict(text=True)
+    d = r.as_dict(text=True)
+    if explain:
+        from .explain import attach_explanation
+        d = attach_explanation(d)
+    return d
 
 
 def _review_store(cfg: Config, db: str | None = None) -> Any:
@@ -98,7 +107,10 @@ def build_tools(server=None) -> list[Tool]:
         if not isinstance(text, str) or not text.strip():
             raise MCPError(-32602, "text 必须是非空字符串")
         gate = server._lazy_gate()
-        return _guard_one(gate, text, str(args.get("scene", "prompt")))
+        d = _guard_one(gate, text, str(args.get("scene", "prompt")))
+        if not (args.get("explain") is False):
+            pass  # _guard_one 已默认附 explanation
+        return d
 
     def h_guard_batch(cfg: Config, args: dict) -> dict:
         texts = args.get("texts")
@@ -108,9 +120,14 @@ def build_tools(server=None) -> list[Tool]:
         from .gate import guard_texts
         res = guard_texts(texts, scene=str(args.get("scene", "prompt")), gate=gate)
         counts = {"allow": 0, "watch": 0, "block": 0}
+        out = []
         for r in res:
+            if args.get("explain") is not False:
+                from .explain import attach_explanation
+                r = attach_explanation(r)
+            out.append(r)
             counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
-        return {"n": len(res), "counts": counts, "results": res}
+        return {"n": len(out), "counts": counts, "results": out}
 
     def h_review_queue(cfg: Config, args: dict) -> dict:
         from .review import load_items
@@ -179,22 +196,60 @@ def build_tools(server=None) -> list[Tool]:
                 "records_added": r.get("records_added", 0),
                 "error": r.get("error")}
 
+    def h_explain(cfg: Config, args: dict) -> dict:
+        """对一条 guard 结果（dict）做脱机解释：不跑模型，只做纯变换。"""
+        result = args.get("result")
+        verdict = (result or {}).get("verdict")
+        if verdict not in ("allow", "watch", "block"):
+            raise MCPError(-32602, "result 必须含 verdict ∈ {allow,watch,block}")
+        from .explain import attach_explanation, build_explanation
+        return {
+            "explained": attach_explanation(result),
+            "explanation": build_explanation(result),
+        }
+
+    def h_read_alert(cfg: Config, args: dict) -> dict:
+        key = args.get("key")
+        if not isinstance(key, str) or not key:
+            raise MCPError(-32602, "key 必填（source|row_id|text_sha）")
+        from .explain import read_alert
+        rec = read_alert(key, out_dir=str(args.get("out_dir", "outputs/ingest") or "outputs/ingest"))
+        if rec is None:
+            return {"found": False, "key": key}
+        return {"found": True, "alert": rec}
+
     return [
         Tool("guard_text",
              "对单条文本做投毒/注入判定，返回 allow/watch/block 三档及信号解释。"
              "scene ∈ {prompt, retrieval, tool_output}。",
              {"type": "object",
               "properties": {"text": {"type": "string"},
-                             "scene": {"type": "string"}},
+                             "scene": {"type": "string"},
+                             "explain": {"type": "boolean"}},
               "required": ["text"]},
              h_guard_text),
         Tool("guard_batch",
              "批量判定多条文本，返回每条 verdict 与分档计数。",
              {"type": "object",
               "properties": {"texts": {"type": "array", "items": {"type": "string"}},
-                             "scene": {"type": "string"}},
+                             "scene": {"type": "string"},
+                             "explain": {"type": "boolean"}},
               "required": ["texts"]},
              h_guard_batch),
+        Tool("explain",
+             "对任意一条 guard 结果做可读解释（脱机、不跑模型）："
+             "verdict 中文 / reason 因果链 / action 处置建议 / trace / 阈值。",
+             {"type": "object",
+              "properties": {"result": {"type": "object"}},
+              "required": ["result"]},
+             h_explain),
+        Tool("read_alert",
+             "按 key 读取一条告警详情（含 flag、score、来源行、视图溯源、原文）。",
+             {"type": "object",
+              "properties": {"key": {"type": "string"},
+                             "out_dir": {"type": "string"}},
+              "required": ["key"]},
+             h_read_alert),
         Tool("review_queue",
              "读取人审队列（BLOCK/WATCH 未判决样本 Top-N）与当前判决统计。",
              {"type": "object",
