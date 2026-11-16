@@ -1008,6 +1008,9 @@ ARG_DEFAULTS = {
     "rc_topk": 5, "rc_min_ratio": 0.75, "rc_corpus": "train", "rc_limit": 400, "rc_seed": 42,
     "drift_input": "", "drift_column": "text", "drift_fmt": "auto",
     "drift_limit": 500, "drift_no_encoder": False, "drift_seed": 42,
+    "stress_n_texts": 200, "stress_n_repeat": 3, "stress_real_encoder": False,
+    "stress_no_scorer": False, "stress_no_ragcheck": False,
+    "stress_no_vecdb": False,
     "calibrate": True, "sample_pass": 0, "db": None, "host": "127.0.0.1", "port": 8077,
     "target_fpr": 0.01, "detector": "sup_tfidf", "mode": "pooled",
     "min_support": 30, "corpus_dir": "outputs/feedback", "report": "docs/运维日报.md",
@@ -1046,6 +1049,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("factcheck", "数字级事实校验(P0-2)：数字位置的模型先验 → 抓内容级篡改"),
         ("ragcheck", "检索式事实核验(P0-2 升级)：拆分事实点→参考语料检索→一致性核验（需先跑 data）"),
         ("drift", "域漂移体检(P1 换域)：输入 vs 训练域 dev 的三轴漂移报告（长度/向量/字符KL）"),
+        ("stress", "吞吐压测(P1 上线热身)：encoder/scorer/检索一致性/向量库的 QPS 报告"),
         ("feedback", "误报闭环(C4)：人审判定 → 在线FPR/影子阈值/难负样本语料"),
         ("gate", "输入闸门(输入侧/检索/工具输出 → allow/watch/block)"),
         ("mcp", "MCP 服务(P2)：stdio JSON-RPC，Agent 可调 guard/review/ingest"),
@@ -1161,6 +1165,20 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--no-encoder", dest="drift_no_encoder", action="store_true",
                            help="跳过编码器（只做长度+字符KL两轴，无需模型）")
             p.add_argument("--seed", dest="drift_seed", type=int, default=42)
+        if name == "stress":
+            p.add_argument("--n-texts", dest="stress_n_texts", type=int, default=200,
+                           help="压测样本条数(默认 200)")
+            p.add_argument("--n-repeat", dest="stress_n_repeat", type=int, default=3,
+                           help="重复轮数(默认 3)")
+            p.add_argument("--real-encoder", dest="stress_real_encoder",
+                           action="store_true",
+                           help="用真实 crom 编码器（默认 TinyEncoder 无模型快速跑）")
+            p.add_argument("--no-scorer", dest="stress_no_scorer", action="store_true",
+                           help="跳过打分器压测")
+            p.add_argument("--no-ragcheck", dest="stress_no_ragcheck",
+                           action="store_true", help="跳过检索一致性压测")
+            p.add_argument("--no-vecdb", dest="stress_no_vecdb", action="store_true",
+                           help="跳过向量库压测")
         if name == "feedback":
             p.add_argument("--db", default="outputs/ingest/review.sqlite3",
                            help="人审判决库（review 产出）")
@@ -1504,6 +1522,17 @@ def main(argv: list[str] | None = None) -> int:
                         limit=int(getattr(args, "drift_limit", 500) or 0),
                         with_encoder=not bool(getattr(args, "drift_no_encoder", False)),
                         seed=int(getattr(args, "drift_seed", 42) or 42))
+    elif args.cmd == "stress":
+        from .stress import run_stress
+
+        run_stress(cfg,
+                   out_path=_metrics_path(cfg, "stress.json"),
+                   n_texts=int(getattr(args, "stress_n_texts", 200) or 200),
+                   n_repeat=int(getattr(args, "stress_n_repeat", 3) or 3),
+                   real_encoder=bool(getattr(args, "stress_real_encoder", False)),
+                   with_scorer=not bool(getattr(args, "stress_no_scorer", False)),
+                   with_ragcheck=not bool(getattr(args, "stress_no_ragcheck", False)),
+                   with_vecdb=not bool(getattr(args, "stress_no_vecdb", False)))
     elif args.cmd == "feedback":
         from .data import load_splits
         from .feedback import run_feedback
