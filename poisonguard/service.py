@@ -45,6 +45,12 @@ from .log import event, get_logger
 from .config import Config, load_config
 from .detectors import KNNDetector, Calibration, CharNgramDetector
 from .encoders import get_encoder
+from .metrics import (
+    batch_jobs_total, batch_running, batch_submit_total, batch_texts_total,
+    component_present, http_requests_total, model_info, render as render_metrics,
+    score_errors_total, score_latency_seconds, score_requests_total,
+    score_texts_total, uptime_seconds, version_switch_total,
+)
 
 MAX_BATCH = 512
 
@@ -224,6 +230,9 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
 
     app = FastAPI(title="poisonguard 在线打分服务", version="2.0")
 
+    _created_at = time.time()
+    uptime_seconds.set(0.0)
+
     _build_lock = threading.Lock()
     _versions: dict[str, PoisonScorer] = {}
     _active: str | None = None
@@ -264,7 +273,17 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
                     sc = _recalibrate(_factory())
                     _register(sc.version, sc)
                     _active = list(_versions)[-1]
+                    _seed_info_gauges(_versions[_active])
         return _versions[_active]
+
+    def _seed_info_gauges(sc: PoisonScorer) -> None:
+        """装配成功后刷新 model / component / uptime 等 info 类 gauge。"""
+        uptime_seconds.set(time.time() - _created_at)
+        model_info.set(1.0, version=getattr(sc, "version", "unknown"))
+        for name, present in (("knn", sc.knn is not None),
+                              ("char_ngram", sc.ngram is not None),
+                              ("student", sc.student is not None)):
+            component_present.set(1.0 if present else 0.0, name=name)
 
     def _register(version: str, sc: PoisonScorer) -> str:
         key = version
@@ -288,6 +307,8 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
             _active = key
             event(LOG, "model.switch", to=key, from_=old,
                   n_versions=len(_versions))
+            version_switch_total.inc()
+            model_info.set(1.0, version=_versions[key].version)
             security.audit.record(
                 action="model.switch", method="POST", path=via,
                 status=200, detail=f"from={old} to={key}")
@@ -326,6 +347,8 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
                 key = _register(sc.version, sc)
                 _active = key
                 event(LOG, "model.reload", to=key, from_=old)
+                version_switch_total.inc()
+                model_info.set(1.0, version=sc.version)
                 security.audit.record(
                     action="model.reload", method="POST", path="/admin/reload",
                     status=200, detail=f"from={old} to={key}")
@@ -395,6 +418,7 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
         def _run():
             nonlocal _batch_running
             _batch_running += 1
+            batch_running.set(_batch_running)
             try:
                 sc = _scorer()   # 惰性装配（同步路径建好也可能被 admin 切走）
                 out = []
@@ -407,11 +431,14 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
                     job["state"] = "running"
                 job["results"] = out
                 job["state"] = "done"
+                batch_jobs_total.labels(state="done").inc()
             except Exception as exc:
                 job["error"] = f"{type(exc).__name__}: {exc}"
                 job["state"] = "failed"
+                batch_jobs_total.labels(state="failed").inc()
             finally:
                 _batch_running -= 1
+                batch_running.set(_batch_running)
 
         _executor.submit(_run)
         return job_id
@@ -425,6 +452,8 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
         if _batch_running >= 2 * _batch_max_jobs:  # 防御：worker 全忙也限总驻留
             raise HTTPException(status_code=503, detail="批处理队列已满，请稍后再试")
         job_id = _batch_submit(req.texts, req.explain)
+        batch_submit_total.inc()
+        batch_texts_total.add(len(req.texts))
         event(LOG, "batch.submit", job=job_id, n=len(req.texts))
         security.audit.record(
             action="batch.submit", method="POST", path="/batch", status=200,
@@ -468,6 +497,9 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
             return resp
         finally:
             ms = (time.perf_counter() - t0) * 1000.0
+            http_requests_total.labels(method=request.method,
+                                       path=request.url.path,
+                                       status=status).inc()
             security.audit.record(
                 action="http.request",
                 method=request.method,
@@ -506,20 +538,41 @@ def create_app(cfg: Config | None = None, student_path: str | Path | None = None
         except Exception as exc:  # 记下来再抛，否则线上排障只能靠猜
             event(LOG, "score.error", level=logging.ERROR,
                   n=len(req.texts), err=type(exc).__name__)
+            score_errors_total.inc()
             raise
+        ms = (time.perf_counter() - t0) * 1000.0
         n_flag = sum(1 for r in res.get("results", []) if r.get("flag"))
+        score_requests_total.inc()
+        score_texts_total.add(len(req.texts))
+        score_latency_seconds.observe(ms / 1000.0)
         event(LOG, "score.request", n=len(req.texts), n_flag=n_flag,
-              ms=round((time.perf_counter() - t0) * 1000, 1),
-              threshold=res.get("threshold"))
+              ms=round(ms, 1), threshold=res.get("threshold"))
         security.audit.record(
             action="score.request", method="POST", path="/score", status=200,
             api_key_id=identity[1], client_ip=identity[0],
-            n=len(req.texts), ms=round((time.perf_counter() - t0) * 1000, 1))
+            n=len(req.texts), ms=round(ms, 1))
         return res
 
     @app.get("/stats")
     def stats(identity=Depends(security.auth())) -> dict:
         return _scorer().stats()
+
+    @app.get("/metrics")
+    def metrics(identity=Depends(security.auth())) -> dict:
+        """Prometheus 文本格式指标（无第三方依赖，手写 4.0 exposition）。
+        默认挂鉴权下返回 401；授权后由 Prometheus 直接抓取。"""
+        from fastapi.responses import Response
+
+        uptime_seconds.set(time.time() - _created_at)
+        s = _scorer()
+        model_info.set(1.0, version=s.version)
+        for name, present in (("knn", s.knn is not None),
+                              ("char_ngram", s.ngram is not None),
+                              ("student", s.student is not None)):
+            component_present.set(1.0 if present else 0.0, name=name)
+        return Response(
+            content=render_metrics(),
+            media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return app
 
