@@ -1,0 +1,74 @@
+{
+  "model": "Qwen2.5-0.5B 冻结主干 + 注入二分类头（P3 L2）",
+  "name": "inject_head",
+  "data": {
+    "train_pos": 240,
+    "train_neg": 240,
+    "seen_families": [
+      "plain_ignore",
+      "fake_json",
+      "few_shot_mimic",
+      "authority",
+      "delimiter_break",
+      "instruction_in_reason"
+    ],
+    "unseen_families": [
+      "role_switch",
+      "fake_system"
+    ],
+    "seen_eval_n": 192,
+    "unseen_eval_n": 200
+  },
+  "seen": {
+    "n_pos": 96,
+    "n_neg": 96,
+    "auroc": 1.0,
+    "auprc": 1.0,
+    "tpr_at_fpr1_devcal": 1.0,
+    "threshold_fixed": 0.5,
+    "threshold_devcal": 0.0007,
+    "precision_fixed": 1.0,
+    "recall_fixed": 1.0,
+    "f1_fixed": 1.0,
+    "precision_devcal": 0.9697,
+    "recall_devcal": 1.0,
+    "f1_devcal": 0.9846,
+    "family_recall": {
+      "plain_ignore": 1.0,
+      "fake_json": 1.0,
+      "few_shot_mimic": 1.0,
+      "authority": 1.0,
+      "delimiter_break": 1.0,
+      "instruction_in_reason": 1.0,
+      "normal": 0.0
+    }
+  },
+  "unseen": {
+    "n_pos": 100,
+    "n_neg": 100,
+    "auroc": 1.0,
+    "auprc": 1.0,
+    "tpr_at_fpr1_devcal": 1.0,
+    "threshold_fixed": 0.5,
+    "threshold_devcal": 0.0007,
+    "precision_fixed": 1.0,
+    "recall_fixed": 1.0,
+    "f1_fixed": 1.0,
+    "precision_devcal": 0.9804,
+    "recall_devcal": 1.0,
+    "f1_devcal": 0.9901,
+    "family_recall": {
+      "role_switch": 1.0,
+      "fake_system": 1.0,
+      "normal": 0.0
+    }
+  },
+  "head_params": {
+    "W_shape": [
+      896
+    ],
+    "C": 1.0,
+    "seed": 0
+  },
+  "seconds": 194.6
+}

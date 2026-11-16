@@ -52,6 +52,7 @@ omit = [
     "poisonguard/train_qwen_lora.py",
     "poisonguard/victim.py",
     "poisonguard/struct.py",
+    "poisonguard/inject.py",
     "poisonguard/strongattack.py",
 ]
 

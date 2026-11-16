@@ -1018,6 +1018,8 @@ ARG_DEFAULTS = {
     "watch": False, "poll": 10.0, "max_files": 0, "no_explain": False,
     "struct_c": 1.0,
     "struct_seed": 42,
+    "inject_c": 1.0,
+    "inject_seed": 0,
 }
 
 
@@ -1035,6 +1037,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("hardneg", "硬负样本压力测试(攻击 vs 同样像传闻的无害新闻)"),
         ("distill", "判官蒸馏为毫秒级学生模型(降本环节)"),
         ("struct-train", "结构隔离判官：冻结 Qwen 主干 + 二分类头(A1)"),
+        ("inject-train", "提示注入头(P3 L2)：冻结 Qwen 主干 + 注入二分类头，seen/unseen 两列评测"),
         ("conformal", "Conformal Prediction：把 1%% FPR 变成带有限样本保证的声明(A2)"),
         ("attack-study", "强攻击研究(A3)：零宽/同形/全角/回译/GCG 后缀 对真实投毒正样本的配对杀伤"),
         ("ranker", "学生排序器(A5)：字符 n-gram / 句向量 / 混合 / PCA / MLP 受控对比"),
@@ -1101,6 +1104,22 @@ def build_parser() -> argparse.ArgumentParser:
                            help="头训练随机种子(默认 42)")
             p.add_argument("--qwen-model", default=None,
                            help="覆盖冻结主干: 0.5b / 1.5b / 完整 model id")
+        if name == "inject-train":
+            p.add_argument("--out", default=None,
+                           help="指标输出路径(默认 outputs/metrics/inject.json)")
+            p.add_argument("--train-per-family", dest="train_per_family",
+                           type=int, default=40,
+                           help="每个 seen 载荷家族造多少条正样本(默认 40)")
+            p.add_argument("--n-eval", dest="n_eval", type=int, default=100,
+                           help="seen/unseen 每侧评测条数(默认 100)")
+            p.add_argument("--C", dest="inject_c", type=float, default=1.0,
+                           help="注入头 LR 正则强度倒数(默认 1.0)")
+            p.add_argument("--seed", dest="inject_seed", type=int, default=0,
+                           help="注入头数据/训练种子(默认 0)")
+            p.add_argument("--qwen-model", default=None,
+                           help="覆盖冻结主干: 0.5b / 1.5b / 完整 model id")
+            p.add_argument("--full", action="store_true",
+                           help="全量 1k~2k 训练模板(CPU 约 20~40 分钟)")
         if name == "conformal":
             p.add_argument("--alpha", type=float, default=0.01, dest="alpha",
                            help="目标 FPR(默认 0.01)，同时是 conformal 的 α")
@@ -1425,6 +1444,16 @@ def main(argv: list[str] | None = None) -> int:
                    out_path=_metrics_path(cfg, "struct.json"),
                    C=float(getattr(args, "struct_c", 1.0) or 1.0),
                    seed=int(getattr(args, "struct_seed", 42) or 42))
+    elif args.cmd == "inject-train":
+        from .inject import run_inject
+
+        run_inject(cfg,
+                   out_path=getattr(args, "out", None),
+                   train_per_family=int(getattr(args, "train_per_family", 40) or 40),
+                   n_eval=int(getattr(args, "n_eval", 100) or 100),
+                   C=float(getattr(args, "inject_c", 1.0) or 1.0),
+                   seed=int(getattr(args, "inject_seed", 0) or 0),
+                   full=bool(getattr(args, "full", False)))
     elif args.cmd == "conformal":
         from .conformal import run_conformal
 
