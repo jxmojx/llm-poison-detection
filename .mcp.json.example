@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "poisonguard": {
+      "command": "python",
+      "args": ["-m", "poisonguard.mcp"],
+      "cwd": "D:/Data/PycharmFile/netsafe",
+      "env": {
+        "POISONGUARD_LOG_LEVEL": "info"
+      }
+    }
+  }
+}

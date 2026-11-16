@@ -1035,7 +1035,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("hardneg", "硬负样本压力测试(攻击 vs 同样像传闻的无害新闻)"),
         ("distill", "判官蒸馏为毫秒级学生模型(降本环节)"),
         ("struct-train", "结构隔离判官：冻结 Qwen 主干 + 二分类头(A1)"),
-        ("conformal", "Conformal Prediction：把 1% FPR 变成带有限样本保证的声明(A2)"),
+        ("conformal", "Conformal Prediction：把 1%% FPR 变成带有限样本保证的声明(A2)"),
         ("attack-study", "强攻击研究(A3)：零宽/同形/全角/回译/GCG 后缀 对真实投毒正样本的配对杀伤"),
         ("ranker", "学生排序器(A5)：字符 n-gram / 句向量 / 混合 / PCA / MLP 受控对比"),
         ("redteam", "判官提示注入红队(检测器被自己输入劫持的风险)"),
@@ -1043,6 +1043,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("factcheck", "数字级事实校验(P0-2)：数字位置的模型先验 → 抓内容级篡改"),
         ("feedback", "误报闭环(C4)：人审判定 → 在线FPR/影子阈值/难负样本语料"),
         ("gate", "输入闸门(输入侧/检索/工具输出 → allow/watch/block)"),
+        ("mcp", "MCP 服务(P2)：stdio JSON-RPC，Agent 可调 guard/review/ingest"),
         ("review", "人审台(C1)：BLOCK/WATCH 队列 → 判定 + 理由码落库"),
         ("serve", "起在线打分 HTTP 服务(不含 LLM)"),
         ("scan", "批量扫描任意文件(入库网关/RAG 审核)：txt/csv/jsonl → 分数+视图+人审报告"),
@@ -1478,6 +1479,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[feedback] 已判 {res['n_decided']} 条：误报 {r['n_fp']}/{r['n_blocked']} "
               f"= {r['fp_rate']:.2%}  告警={res['alarm']['status']}")
         print(f"[feedback] {res['alarm']['message']}")
+    elif args.cmd == "mcp":
+        from .mcp import serve_stdio
+        import sys as _sys
+        print("[mcp] 启动 stdio JSON-RPC 服务（tools: guard_text / guard_batch / "
+              "review_queue / record_decision / ingest_file）",
+              file=_sys.stderr, flush=True)
+        return serve_stdio()
     elif args.cmd == "gate":
         from .gate import Gate, GateConfig, guard_texts, serve_http
 
