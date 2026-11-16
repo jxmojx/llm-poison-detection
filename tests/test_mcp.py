@@ -29,7 +29,11 @@ def test_initialize_returns_protocol_metadata():
     assert r is not None
     assert r["id"] == 1
     assert r["result"]["protocolVersion"] == "2024-11-05"
-    assert r["result"]["capabilities"]["tools"]["listChanged"] is False
+    caps = r["result"]["capabilities"]
+    assert caps["tools"]["listChanged"] is False
+    # Gap 3：resources / prompts 必须在 capabilities 里声明
+    assert caps["resources"] == {"subscribe": False, "listChanged": False}
+    assert caps["prompts"] == {"listChanged": False}
     assert r["result"]["serverInfo"]["name"] == "poisonguard"
 
 
@@ -158,6 +162,81 @@ def test_call_read_alert_missing_alert_returns_found_false(tmp_path):
     payload = json.loads(r["result"]["content"][0]["text"])
     assert payload["found"] is False
     assert payload["key"] == "nope|0|x"
+
+
+# ----------------------------------------------------------------------
+# Gap 3：resources / prompts 协议子集（纯逻辑，不加载模型）
+# ----------------------------------------------------------------------
+def test_resources_list_exposes_three():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 20, "method": "resources/list"})
+    resources = r["result"]["resources"]
+    uris = [x["uri"] for x in resources]
+    assert uris == ["poisonguard://guard/policy",
+                    "poisonguard://metrics/inject",
+                    "poisonguard://server/status"]
+    for x in resources:
+        assert "name" in x and "description" in x and "mimeType" in x
+
+
+def test_resources_read_policy_returns_json():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 21, "method": "resources/read",
+                 "params": {"uri": "poisonguard://guard/policy"}})
+    contents = r["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "poisonguard://guard/policy"
+    assert contents[0]["mimeType"] == "application/json"
+    json.loads(contents[0]["text"])  # 必须可解析
+
+
+def test_resources_read_status_reports_injection_head():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 22, "method": "resources/read",
+                 "params": {"uri": "poisonguard://server/status"}})
+    text = r["result"]["contents"][0]["text"]
+    st = json.loads(text)
+    assert st["serverName"] == "poisonguard"
+    assert st["tools"] == 7 and st["resources"] == 3 and st["prompts"] == 1
+    assert "injection_head_ready" in st  # 布尔（本机可能已真跑，不 here 断言）
+
+
+def test_resources_read_unknown_uri_is_param_error():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 23, "method": "resources/read",
+                 "params": {"uri": "poisonguard://nope"}})
+    assert r["error"]["code"] == -32602
+
+
+def test_resources_read_notification_is_invalid_request():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "method": "resources/read",
+                 "params": {"uri": "poisonguard://guard/policy"}})
+    assert "error" in r and r["error"]["code"] == -32600
+
+
+def test_prompts_list_exposes_guard_template():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 24, "method": "prompts/list"})
+    prompts = r["result"]["prompts"]
+    assert prompts[0]["name"] == "poisonguard://prompts/guard"
+    assert prompts[0]["arguments"] == []
+
+
+def test_prompts_get_returns_messages():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 25, "method": "prompts/get",
+                 "params": {"name": "poisonguard://prompts/guard"}})
+    assert r["result"]["name"] == "poisonguard://prompts/guard"
+    assert r["result"]["messages"][0]["role"] == "user"
+    assert "guard_text" in r["result"]["messages"][0]["content"]["text"]
+
+
+def test_prompts_get_unknown_name_is_param_error():
+    s = Server()
+    r = call(s, {"jsonrpc": "2.0", "id": 26, "method": "prompts/get",
+                 "params": {"name": "poisonguard://prompts/nope"}})
+    assert r["error"]["code"] == -32602
 
 
 # ----------------------------------------------------------------------
