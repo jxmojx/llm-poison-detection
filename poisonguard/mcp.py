@@ -36,6 +36,26 @@ PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "poisonguard"
 SERVER_VERSION = "1.0"
 
+# Gap 4：鉴权
+# - stdio：客户端在 initialize 的 params.authorization 里带
+#   "Bearer <token>"（MCP 2025-03-26 认证草案的传输无关方式）。
+# - HTTP：Authorization: Bearer <token> 头（Gap 5 的 serve_http 实现）。
+# - token 为空表示不鉴权（本地 stdio 默认）。默认从环境变量读，避免写死。
+DEFAULT_MCP_TOKEN_ENV = "POISONGUARD_MCP_TOKEN"
+
+
+def _env_token() -> str:
+    import os
+    return os.environ.get(DEFAULT_MCP_TOKEN_ENV, "") or ""
+
+
+def _extract_bearer(params: dict) -> str:
+    """从 params.authorization 提取 token（无则空串）。"""
+    auth = params.get("authorization")
+    if isinstance(auth, str):
+        return auth.removeprefix("Bearer ").strip()
+    return ""
+
 # ----------------------------------------------------------------------
 # Gap 3：resources / prompts 协议子集
 # ----------------------------------------------------------------------
@@ -396,11 +416,15 @@ def build_tools(server=None) -> list[Tool]:
 # 服务器：懒装配 + JSON-RPC 分派
 # ----------------------------------------------------------------------
 class Server:
-    def __init__(self, cfg: Config | None = None, tools: list[Tool] | None = None):
+    def __init__(self, cfg: Config | None = None, tools: list[Tool] | None = None,
+                 auth_token: str | None = None):
         self.cfg = cfg or Config()
         self._gate = None
         self._gate_building = False
         self.tools = tools or build_tools(server=self)
+        # 鉴权：显式传参 > 环境变量；空 = 不鉴权
+        self.auth_token = auth_token if auth_token is not None else _env_token()
+        self._authed = self.auth_token == ""  # 无 token 直接视为已认证
 
     def _lazy_gate(self):
         if self._gate is not None or self._gate_building:
@@ -421,6 +445,23 @@ class Server:
             raise
         return self._gate
 
+    # ---- Gap 4：HTTP 传输层鉴权辅助 ----
+    def authorize_bearer(self, header: str | None) -> bool:
+        """HTTP 侧：从 Authorization 头提取 Bearer token 并比对。
+
+        成功返回 True（并标记 _authed）；失败/无 token 返回 False。
+        """
+        if not self.auth_token:
+            self._authed = True
+            return True
+        if not header:
+            return False
+        token = header.removeprefix("Bearer ").strip()
+        if token and token == self.auth_token:
+            self._authed = True
+            return True
+        return False
+
     # ---- JSON-RPC ----
     def dispatch(self, msg: dict) -> dict | None:
         """返回要写回 stdout 的 response（None=通知，无需回包）。"""
@@ -432,6 +473,14 @@ class Server:
         if method == "initialize":
             if not is_request:
                 return None
+            # Gap 4：鉴权在 initialize 完成——stdio 用 params.authorization
+            params = msg.get("params") or {}
+            client_token = _extract_bearer(params)
+            if self.auth_token and client_token != self.auth_token:
+                # 不泄露 token 存在与否：统一回认证失败
+                return self._err_response(ident, _err(
+                    -32001, "认证失败：authorization 缺失或不匹配"))
+            self._authed = True
             return self._response(ident, {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {
@@ -441,6 +490,9 @@ class Server:
                 },
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             })
+        # 未认证：除 initialize 外一律拒绝（不暴露方法存在性）
+        if not self._authed:
+            return self._err_response(ident, _err(-32001, "未认证：请先 initialize"))
         if method == "notifications/initialized":
             return None
         if method == "tools/list":

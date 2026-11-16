@@ -240,6 +240,70 @@ def test_prompts_get_unknown_name_is_param_error():
 
 
 # ----------------------------------------------------------------------
+# Gap 4：鉴权（stdio 用 initialize authorization；HTTP 用 bearer 头）
+# ----------------------------------------------------------------------
+def test_auth_enabled_rejects_before_initialize():
+    s = Server(auth_token="secret")
+    r = call(s, {"jsonrpc": "2.0", "id": 30, "method": "tools/list"})
+    assert r["error"]["code"] == -32001
+    assert "initialize" in r["error"]["message"]
+
+
+def test_auth_wrong_token_in_initialize_rejected():
+    s = Server(auth_token="secret")
+    r = call(s, {"jsonrpc": "2.0", "id": 31, "method": "initialize",
+                 "params": {"authorization": "Bearer wrong"}})
+    assert r["error"]["code"] == -32001
+    # 仍处于未认证态
+    r2 = call(s, {"jsonrpc": "2.0", "id": 32, "method": "tools/list"})
+    assert r2["error"]["code"] == -32001
+
+
+def test_auth_correct_token_passes_initialize():
+    s = Server(auth_token="secret")
+    r = call(s, {"jsonrpc": "2.0", "id": 33, "method": "initialize",
+                 "params": {"authorization": "Bearer secret"}})
+    assert "error" not in r
+    r2 = call(s, {"jsonrpc": "2.0", "id": 34, "method": "tools/list"})
+    assert "error" not in r2
+
+
+def test_auth_env_token_is_used_by_default():
+    import os
+    os.environ["POISONGUARD_MCP_TOKEN"] = "envsecret"
+    try:
+        s = Server()
+        assert s.auth_token == "envsecret"
+        r = call(s, {"jsonrpc": "2.0", "id": 35, "method": "initialize",
+                     "params": {"authorization": "Bearer envsecret"}})
+        assert "error" not in r
+    finally:
+        os.environ.pop("POISONGUARD_MCP_TOKEN", None)
+
+
+def test_auth_follows_initialize_then_reject_tools_without_auth():
+    s = Server(auth_token="secret")
+    # 未 initialize 的 tools/call 直接拒绝，不会尝试懒装配模型
+    r = call(s, {"jsonrpc": "2.0", "id": 36, "method": "tools/call",
+                 "params": {"name": "guard_text", "arguments": {"text": "hi"}}})
+    assert r["error"]["code"] == -32001
+
+
+def test_http_authorize_bearer_success_and_failure():
+    s = Server(auth_token="secret")
+    assert s.authorize_bearer("Bearer wrong") is False
+    assert s._authed is False
+    assert s.authorize_bearer("Bearer secret") is True
+    assert s._authed is True
+
+
+def test_http_authorize_no_token_means_no_auth():
+    s = Server(auth_token="")
+    assert s.authorize_bearer(None) is True
+    assert s._authed is True
+
+
+# ----------------------------------------------------------------------
 # 协议层错误码
 # ----------------------------------------------------------------------
 def test_non_dict_message_is_invalid_request_error():
