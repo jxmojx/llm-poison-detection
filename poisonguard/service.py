@@ -104,7 +104,8 @@ class PoisonScorer:
         # kNN 原始距离分对运维不可读，转成"经验 FPR"更直观：越小越可疑
         fpr = self.cal.to_fpr(knn) if self.cal else np.full(len(texts), np.nan)
         ngram = self.ngram.score(X, texts) if self.ngram else np.full(len(texts), np.nan)
-        stu = self.student.score(texts, X) if self.student else np.full(len(texts), np.nan)
+        # 学生模型：有增量头时走 blend 打分（adapt_score 内部兜底为旧头）
+        stu = self.student.adapt_score(texts, X) if self.student else np.full(len(texts), np.nan)
 
         out = []
         for i, t in enumerate(texts):

@@ -1035,6 +1035,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("audit", "词面审计(检测器在抓有害性还是'没见过这种句式')"),
         ("hardneg", "硬负样本压力测试(攻击 vs 同样像传闻的无害新闻)"),
         ("distill", "判官蒸馏为毫秒级学生模型(降本环节)"),
+        ("distill-adapt", "域适配增量训练：在旧学生上冻结旧域参数、增量拟合新域(环节30-2)"),
         ("struct-train", "结构隔离判官：冻结 Qwen 主干 + 二分类头(A1)"),
         ("conformal", "Conformal Prediction：把 1%% FPR 变成带有限样本保证的声明(A2)"),
         ("attack-study", "强攻击研究(A3)：零宽/同形/全角/回译/GCG 后缀 对真实投毒正样本的配对杀伤"),
@@ -1095,6 +1096,23 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--dev-file", default=None, help="训练侧软标签 jsonl")
             p.add_argument("--test-file", default=None, help="测试侧软标签 jsonl")
             p.add_argument("--distill-c", type=float, default=1.0, help="逻辑回归正则强度倒数")
+        if name == "distill-adapt":
+            p.add_argument("--student", default=None,
+                           help="旧学生 pkl 路径（必须，增量训练基底）")
+            p.add_argument("--adapt-dev", dest="adapt_dev", default=None,
+                           help="新域训练软标签 jsonl（默认按当前域探测 judge_samples_dev*.jsonl）")
+            p.add_argument("--adapt-test", dest="adapt_test", default=None,
+                           help="新域测试软标签 jsonl")
+            p.add_argument("--old-dev", dest="old_dev", default=None,
+                           help="旧域训练软标签 jsonl（评测旧域不遗忘）")
+            p.add_argument("--old-test", dest="old_test", default=None,
+                           help="旧域测试软标签 jsonl")
+            p.add_argument("--domain", default="new", help="增量域标识(写入报告)")
+            p.add_argument("--gamma", type=float, default=0.5,
+                           help="旧头 blend 权重(0~1；越大越保守，默认 0.5)")
+            p.add_argument("--distill-c", dest="distill_c", type=float, default=1.0,
+                           help="逻辑回归正则强度倒数")
+            p.add_argument("--out", default=None, help="评测报告输出路径")
         if name == "struct-train":
             p.add_argument("--C", dest="struct_c", type=float, default=1.0,
                            help="逻辑回归头的正则强度倒数(默认 1.0)")
@@ -1423,6 +1441,25 @@ def main(argv: list[str] | None = None) -> int:
                     n_each=int(getattr(args, "rt_each", 5) or 5))
     elif args.cmd == "distill":
         cmd_distill(cfg, args)
+    elif args.cmd == "distill-adapt":
+        from .distill import run_adapt
+
+        student = getattr(args, "student", None)
+        if not student:
+            print("[distill-adapt] 需要 --student <旧学生 pkl>")
+            raise SystemExit(2)
+        run_adapt(
+            cfg,
+            student,
+            adapt_dev_file=getattr(args, "adapt_dev", None),
+            adapt_test_file=getattr(args, "adapt_test", None),
+            old_dev_file=getattr(args, "old_dev", None),
+            old_test_file=getattr(args, "old_test", None),
+            out_path=getattr(args, "out", None),
+            domain=getattr(args, "domain", "new") or "new",
+            gamma=float(getattr(args, "gamma", 0.5) or 0.5),
+            C=float(getattr(args, "distill_c", 1.0) or 1.0),
+        )
     elif args.cmd == "struct-train":
         from .struct import run_struct
 

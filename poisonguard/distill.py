@@ -75,6 +75,12 @@ class JudgeStudent:
         )
         self.threshold = 0.5
         self.train_time = 0.0
+        # 域适配增量（fit_incremental）：新增一个"新域专家头"，与旧头按权重 blend。
+        # 用属性初始值而非新字段，是为了老 pickle load 后 getattr 兜底到 None。
+        self.clf_adapt: LogisticRegression | None = None
+        self.adapt_domain: str = ""
+        self.adapt_time: float = 0.0
+        self.adapt_gamma: float = 0.5     # 旧头权重；越大越保守（更信旧域）
 
     # ---------------- 特征 ----------------
     def _stack(self, texts, X_emb, fit: bool) -> sparse.csr_matrix:
@@ -106,6 +112,62 @@ class JudgeStudent:
         self.train_time = time.time() - t0
         return self
 
+    # ---------------- 域适配增量训练 ----------------
+    def fit_incremental(self, texts, X_emb, teacher_scores, *,
+                        domain: str = "new", gamma: float = 0.5,
+                        threshold: float | None = None) -> "JudgeStudent":
+        """新域增量：在**冻结的旧特征空间**上训练一个「新域专家头」，
+        不重训被旧域锁定的 vec/scaler/旧 logreg —— 这是避免灾难性遗忘的关键：
+        旧域词面分布还在特征里，新头只是学会"新域里什么样算毒"。
+
+        打分时 `adapt_score` 按 `gamma` 权重 blend 两个头：
+            s = gamma * 旧头 + (1-gamma) * 新头
+        gamma 越大越保守（更信旧域），默认 0.5 对等。
+
+        约束（纯逻辑层面）：
+        - 新域训练样本仍要同时覆盖"毒/干净"两侧（否则无法定向增量）；
+        - 旧模型无需重训练，`old` 对象上的旧头保持原样，回归测试可证明不遗忘。
+        """
+        scores = np.asarray(teacher_scores, dtype=np.float64).ravel()
+        thr = threshold if threshold is not None else self.threshold
+        ok = np.isfinite(scores)
+        if ok.sum() < 20:
+            raise ValueError(f"可用软标签太少({int(ok.sum())} 条)，无法增量")
+        y = (scores[ok] >= thr).astype(int)
+        if len(set(y.tolist())) < 2:
+            raise ValueError("新域软标签全落在同一侧，无法增量")
+        w = np.clip(np.abs(scores[ok] - thr) * 2.0, 0.2, 1.0)
+        keep = [t for t, k in zip(texts, ok) if k]
+        F = self._stack(keep, np.asarray(X_emb)[ok], fit=False)  # 冻结旧 vec/scaler
+        t0 = time.time()
+        self.clf_adapt = LogisticRegression(
+            C=self.C, max_iter=self.max_iter, random_state=self.seed,
+            class_weight="balanced", solver="liblinear",
+        ).fit(F, y, sample_weight=w)
+        self.adapt_time = time.time() - t0
+        self.train_time += self.adapt_time
+        self.adapt_gamma = float(gamma)
+        self.adapt_domain = str(domain)
+        return self
+
+    def _adapt_clf(self):
+        """兼容老 pickle：加载的旧学生可能没有 clf_adapt 属性。"""
+        return getattr(self, "clf_adapt", None)
+
+    @property
+    def has_adaptation(self) -> bool:
+        return self._adapt_clf() is not None
+
+    def adapt_score(self, texts, X_emb) -> np.ndarray:
+        """blend 打分：gamma*旧头 + (1-gamma)*新头。没有新头时退化为旧头。"""
+        old = self.score(texts, X_emb)
+        clf_a = self._adapt_clf()
+        if clf_a is None:
+            return old
+        g = float(getattr(self, "adapt_gamma", 0.5))
+        new = clf_a.predict_proba(self._stack(list(texts), X_emb, fit=False))[:, 1]
+        return g * old + (1.0 - g) * new
+
     # ---------------- 推理 ----------------
     def score(self, texts, X_emb) -> np.ndarray:
         if len(texts) == 0:
@@ -113,10 +175,10 @@ class JudgeStudent:
         return self.clf.predict_proba(self._stack(list(texts), X_emb, fit=False))[:, 1]
 
     def timed_score(self, texts, X_emb) -> tuple[np.ndarray, float]:
-        """返回 (分数, 单条毫秒数)。"""
+        """返回 (分数, 单条毫秒数)。有增量头时走 blend 打分。"""
         texts = list(texts)
         t0 = time.perf_counter()
-        s = self.score(texts, X_emb)
+        s = self.adapt_score(texts, X_emb)
         dt = (time.perf_counter() - t0) * 1000.0 / max(len(texts), 1)
         return s, dt
 
@@ -206,6 +268,118 @@ def distill_report(
         if teacher_sec_per_item:
             out["speedup"] = round(float(teacher_sec_per_item) * 1000.0 / max(ms, 1e-9), 1)
     return out
+
+
+def adapt_report(student: "JudgeStudent", adapt_dev: dict, adapt_test: dict,
+                 old_dev: dict, old_test: dict,
+                 X_ad_dev, X_ad_test, X_old_dev, X_old_test) -> dict:
+    """增量评测报告：同时在新域与旧域上打分，证明「新域提升 + 旧域不掉」。
+    """
+    from . import evaluate as E
+
+    def _block(stu, set_, X):
+        pr, ms = stu.timed_score(set_["texts"], X)
+        lab = set_["labels"]
+        ok = np.isfinite(lab)
+        return pr, ms, ok, lab
+
+    # 新域
+    s_ad, ms_ad, ok_ad, y_ad = _block(student, adapt_test, X_ad_test)
+    new_auc = None
+    if ok_ad.sum() > 10 and len(set(y_ad[ok_ad].tolist())) > 1:
+        new_auc = round(E.auroc(y_ad[ok_ad], s_ad[ok_ad]), 4)
+    # 旧域（必须不掉点）
+    s_old, ms_old, ok_old, y_old = _block(student, old_test, X_old_test)
+    old_auc = None
+    if ok_old.sum() > 10 and len(set(y_old[ok_old].tolist())) > 1:
+        old_auc = round(E.auroc(y_old[ok_old], s_old[ok_old]), 4)
+
+    return {
+        "adapt_domain": student.adapt_domain,
+        "gamma": round(student.adapt_gamma, 3),
+        "adapt_time_sec": round(getattr(student, "adapt_time", 0.0), 3),
+        "has_adaptation": student.has_adaptation,
+        "n_adapt_dev": int(len(adapt_dev["texts"])),
+        "n_adapt_test": int(len(adapt_test["texts"])),
+        "n_old_test": int(len(old_test["texts"])),
+        "new_auc": new_auc,
+        "old_auc": old_auc,
+        "new_ms_per_item": round(ms_ad, 4),
+        "old_ms_per_item": round(ms_old, 4),
+    }
+
+
+def run_adapt(cfg, student_path: str | Path, adapt_dev_file=None, adapt_test_file=None,
+              old_dev_file=None, old_test_file=None, out_path=None,
+              domain: str = "new", gamma: float = 0.5, C: float = 1.0,
+              threshold: float | None = None) -> dict:
+    """增量训练入口：读旧学生 → 用新域软标签训练增量头 → 双域评测 → 落盘。
+
+    - student_path    旧学生 pkl（fit_incremental 的基底）
+    - adapt_dev_file  新域训练软标签（judge_samples_dev_<新域>.jsonl）
+    - adapt_test_file 新域测试软标签
+    - old_dev/old_test 旧域软标签（评测旧域不遗忘；不传则只报新域）
+    - 产物：<student_path 同名>.adapt.pkl + adapt.json（含双域指标）
+    """
+    from .encoders import get_encoder
+    from . import evaluate as E
+
+    p_stu = Path(student_path)
+    student = JudgeStudent.load(p_stu)
+    student.C = float(C)
+
+    mdir = Path(cfg.data.processed_dir).parent.parent / "outputs" / "metrics"
+    suffix = Path(cfg.data.processed_dir).name[len("processed"):]  # 例如 "_afqmc"
+
+    def _m(name: str) -> Path:
+        stem, dot, ext = name.partition(".")
+        return mdir / (f"{stem}{suffix}{dot}{ext}" if dot else name)
+
+    dev_file = Path(adapt_dev_file) if adapt_dev_file else _m("judge_samples_dev.jsonl")
+    test_file = Path(adapt_test_file) if adapt_test_file else _m("judge_samples.jsonl")
+    if not dev_file.exists():
+        raise FileNotFoundError(
+            f"缺少新域蒸馏训练数据 {dev_file}；先跑 `poisonguard judge --dev-limit 20`")
+    if not test_file.exists():
+        raise FileNotFoundError(f"缺少新域蒸馏测试数据 {test_file}")
+
+    adapt_dev = load_judge_samples(dev_file)
+    adapt_test = load_judge_samples(test_file)
+    enc = get_encoder(cfg)
+    X_ad_dev = enc.encode(adapt_dev["texts"])
+    X_ad_test = enc.encode(adapt_test["texts"])
+
+    # 旧域评测数据（可选）：absence 时跳过旧域指标
+    old_sets = {}
+    if old_dev_file and Path(old_dev_file).exists() and old_test_file and Path(old_test_file).exists():
+        old_dev = load_judge_samples(old_dev_file)
+        old_test = load_judge_samples(old_test_file)
+        old_sets = {"old_dev": old_dev, "old_test": old_test,
+                    "X_old_dev": enc.encode(old_dev["texts"]),
+                    "X_old_test": enc.encode(old_test["texts"])}
+
+    student.fit_incremental(adapt_dev["texts"], X_ad_dev, adapt_dev["scores"],
+                            domain=domain, gamma=gamma, threshold=threshold)
+    rep = adapt_report(
+        student, adapt_dev, adapt_test,
+        old_sets.get("old_dev", {"texts": []}),
+        old_sets.get("old_test", {"texts": [], "labels": np.array([])}),
+        X_ad_dev, X_ad_test,
+        old_sets.get("X_old_dev", np.zeros((0, 1))),
+        old_sets.get("X_old_test", np.zeros((0, 1))),
+    )
+
+    stu_out = p_stu.with_name(p_stu.stem + ".adapt.pkl")
+    student.save(stu_out)
+    rep["model_path"] = str(stu_out)
+    rep["base_model_path"] = str(p_stu)
+    rep["base_domain"] = getattr(student, "adapt_domain", "") or "base"
+
+    out = Path(out_path) if out_path else p_stu.with_name("adapt.json")
+    E.save_json(rep, out)
+    print(f"[adapt] 增量域=`{domain}` gamma={gamma} 新域AUROC={rep.get('new_auc')} "
+          f"旧域AUROC={rep.get('old_auc')} -> {out}")
+    return rep
 
 
 def run_distill(cfg, dev_file=None, test_file=None, out_path=None, C: float = 1.0) -> dict:

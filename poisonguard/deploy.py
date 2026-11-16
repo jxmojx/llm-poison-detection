@@ -111,7 +111,11 @@ class DeployedScorer:
         knn = s.knn.score(X, texts) if s.knn else np.zeros(len(texts))
         fpr = s.cal.to_fpr(knn) if s.cal else np.full(len(texts), np.nan)
         ngram = s.ngram.score(X, texts) if s.ngram else np.full(len(texts), np.nan)
-        stu = s.student.score(texts, X) if s.student else np.full(len(texts), np.nan)
+        if s.student is not None:
+            _stu_score = getattr(s.student, "adapt_score", None) or s.student.score
+            stu = _stu_score(texts, X)
+        else:
+            stu = np.full(len(texts), np.nan)
 
         out = []
         for i, t in enumerate(texts):
