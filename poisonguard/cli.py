@@ -1038,6 +1038,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("hardneg", "硬负样本压力测试(攻击 vs 同样像传闻的无害新闻)"),
         ("distill", "判官蒸馏为毫秒级学生模型(降本环节)"),
         ("distill-adapt", "域适配增量训练：在旧学生上冻结旧域参数、增量拟合新域(环节30-2)"),
+        ("workpoint", "客户工作点调优：target_fpr 参数化 + 报告(环节30-5)"),
         ("struct-train", "结构隔离判官：冻结 Qwen 主干 + 二分类头(A1)"),
         ("conformal", "Conformal Prediction：把 1%% FPR 变成带有限样本保证的声明(A2)"),
         ("attack-study", "强攻击研究(A3)：零宽/同形/全角/回译/GCG 后缀 对真实投毒正样本的配对杀伤"),
@@ -1115,6 +1116,14 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--distill-c", dest="distill_c", type=float, default=1.0,
                            help="逻辑回归正则强度倒数")
             p.add_argument("--out", default=None, help="评测报告输出路径")
+        if name == "workpoint":
+            p.add_argument("--fprs", dest="fprs", default=None,
+                           help="逗号分隔的 target_fpr 列表（默认 0.001,0.005,0.01,0.02,0.05）")
+            p.add_argument("--label", default="default", help="客户/项目工作点标签(写入报告)")
+            p.add_argument("--out-dir", dest="out_dir", default=None,
+                           help="报告输出目录（默认 outputs/workpoints）")
+            p.add_argument("--poison-file", dest="poison_file", default=None,
+                           help="投毒样本文件（txt/csv/jsonl，用于估计召回）；不给则只出阈值表")
         if name == "struct-train":
             p.add_argument("--C", dest="struct_c", type=float, default=1.0,
                            help="逻辑回归头的正则强度倒数(默认 1.0)")
@@ -1497,6 +1506,32 @@ def main(argv: list[str] | None = None) -> int:
             domain=getattr(args, "domain", "new") or "new",
             gamma=float(getattr(args, "gamma", 0.5) or 0.5),
             C=float(getattr(args, "distill_c", 1.0) or 1.0),
+        )
+    elif args.cmd == "workpoint":
+        from .threshold import clean_dev_texts
+        from .workpoint import workpoint_report
+        from .scan import load_rows
+        from .service import build_scorer
+
+        fprs_raw = getattr(args, "fprs", None)
+        fprs = None
+        if fprs_raw:
+            fprs = [float(x) for x in str(fprs_raw).split(",") if x.strip()]
+        poison_texts = None
+        pf = getattr(args, "poison_file", None)
+        if pf:
+            pf_rows = load_rows(Path(pf), fmt="auto",
+                                column=getattr(args, "column", "text"), limit=0)
+            poison_texts = [r["text"] for r in pf_rows]
+        scorer = build_scorer(cfg, student_path=None)
+        clean_texts = clean_dev_texts(cfg)
+        if not clean_texts:
+            print("[workpoint] 没有 dev 干净样本，无法标定工作点（先跑 data 子命令）")
+            raise SystemExit(2)
+        workpoint_report(
+            scorer, clean_texts=clean_texts, poison_texts=poison_texts,
+            fprs=fprs, out_dir=getattr(args, "out_dir", None),
+            cfg=cfg, label=getattr(args, "label", "default") or "default",
         )
     elif args.cmd == "struct-train":
         from .struct import run_struct
