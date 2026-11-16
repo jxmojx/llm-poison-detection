@@ -64,6 +64,8 @@ def cmd_ingest(cfg: Config, args) -> dict:
         explain=not getattr(args, "no_explain", False),
         pkg_sha=pkg_sha,
         threshold=getattr(args, "threshold", None),
+        resume=bool(getattr(args, "resume", False)),
+        flush_every=int(getattr(args, "flush_every", 512) or 512),
     )
     print(f"[ingest] model={ing.model} threshold={ing.threshold:.4f} "
           f"watch_band={ing.watch_band:g} pkg_sha={pkg_sha or '-'}")
@@ -76,10 +78,14 @@ def cmd_ingest(cfg: Config, args) -> dict:
 
     def _report(rows: list[dict]) -> None:
         for r in rows:
-            if r["status"] == "ok":
+            if r["status"] in ("ok", "resumed"):
                 print(f"[ingest] {r['path']} -> {r['n']} 条 "
                       f"BLOCK {r['block']} / WATCH {r['watch']} / PASS {r['pass']} "
-                      f"（{r['seconds']}s, 新入账 {r.get('records_added', 0)}）")
+                      f"（{r['seconds']}s, 本轮新 {r.get('new', r.get('n', 0))}"
+                      f" 续跑 {r.get('resumed', 0)}）")
+                if r["status"] == "resumed":
+                    print(f"[ingest] {r['path']} -> 续跑完成：台账已含全部行 "
+                          f"（{r.get('reason', '')}），未重复打分")
                 event(LOG, "ingest.done", path=r["path"], n=r["n"],
                       block=r["block"], watch=r["watch"], passed=r["pass"],
                       ms=int(r["seconds"] * 1000))

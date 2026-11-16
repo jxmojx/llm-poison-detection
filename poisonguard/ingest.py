@@ -177,6 +177,26 @@ class IngestLedger:
         with self._conn() as c:
             return int(c.execute("SELECT COUNT(*) FROM files").fetchone()[0])
 
+    def done_rows(self, sha: str) -> set[int]:
+        """已判决的行号集合（断点续跑：处理前查台账，跳过已处理行）。"""
+        with self._conn() as c:
+            rows = c.execute("SELECT row_id FROM records WHERE file_sha=?", (sha,)).fetchall()
+        return {int(r[0]) for r in rows}
+
+    def flag_counts(self, sha: str) -> dict[str, int]:
+        """单个文件的三档计数（断点续跑后合并历史+本次，汇总才是全文件口径）。"""
+        with self._conn() as c:
+            rows = c.execute("SELECT flag, COUNT(*) FROM records WHERE file_sha=? "
+                             "GROUP BY flag", (sha,)).fetchall()
+        out = {f: 0 for f in FLAGS}
+        out.update({str(k): int(v) for k, v in rows})
+        return out
+
+    def progress(self, sha: str, n_rows: int) -> None:
+        """处理进行中把「已处理行数」写回台账（status 仍为 running，可追踪进度）。"""
+        with self._conn() as c:
+            c.execute("UPDATE files SET n_rows=? WHERE file_sha=?", (int(n_rows), sha))
+
 
 # ----------------------------------------------------------------------
 # 打分 → 分档 → 落盘
@@ -193,7 +213,9 @@ class Ingestor:
                  watch_band: float = 0.05,
                  explain: bool = True,
                  pkg_sha: str = "",
-                 threshold: float | None = None):
+                 threshold: float | None = None,
+                 resume: bool = False,
+                 flush_every: int = 512):
         self.scorer = scorer
         self.out_dir = Path(out_dir)
         self.ledger = IngestLedger(ledger_path)
@@ -201,6 +223,8 @@ class Ingestor:
         self.watch_band = max(0.0, float(watch_band))
         self.explain = bool(explain)
         self.pkg_sha = pkg_sha
+        self.resume = bool(resume)
+        self.flush_every = max(1, int(flush_every))
         self.model = str(getattr(scorer, "version", "unknown"))
         for sub in ("quarantine", "review", "released"):
             (self.out_dir / sub).mkdir(parents=True, exist_ok=True)
@@ -228,9 +252,56 @@ class Ingestor:
                 f.write(json.dumps(p2, ensure_ascii=False) + "\n")
 
     # ---------------- 主入口 ----------------
+    def _process_rows(self, sha: str, path: Path, rows: list[dict], *,
+                      done: set[int], t0: float) -> tuple[dict, int]:
+        """对尚未判决的行分批打分 → 分档 → 即时落盘 → 写回台账。
+
+        返回 (结果字典, 新增入账数)。已判决行（done 里的 row_id）直接跳过，
+        幂等是"台账行级去重"（records 的 PK 保证），不是内存快照。
+        """
+        pending = [r for r in rows if r["row_id"] not in done]
+        ts = time.time()
+        added = 0
+        seen: set[int] = set()
+        for i in range(0, len(pending), self.flush_every):
+            chunk = pending[i:i + self.flush_every]
+            res = self.scorer.score([c["text"] for c in chunk], explain=self.explain)
+            results = res.get("results") or []
+            payloads: list[dict] = []
+            rec_rows: list[tuple[str, int, str, float, str]] = []
+            for j, r in enumerate(results):
+                row_id = int(chunk[j]["row_id"])
+                score = float(r.get("score", 0.0))
+                flag = self.decide(score)
+                payloads.append(Verdict(
+                    row_id=row_id, text=chunk[j]["text"], score=score, flag=flag,
+                    views=r.get("views") or {}).as_row(
+                        source=str(path), model=self.model, pkg_sha=self.pkg_sha,
+                        threshold=self.threshold, ts=ts))
+                rec_rows.append((sha, row_id, text_sha(chunk[j]["text"]), score, flag))
+                seen.add(row_id)
+            for flag in FLAGS:
+                self._write(flag, [p for p in payloads if p["flag"] == flag])
+            added += self.ledger.add_records(rec_rows, ts)
+            self.ledger.progress(sha, len(done.union(seen)))
+            ts = time.time()
+        self.ledger.finish(sha, len(rows), "ok")
+        counts = self.ledger.flag_counts(sha)  # 历史 + 本次合并 = 全文件口径
+        return ({"path": str(path), "file_sha": sha, "status": "ok",
+                 "n": len(rows), "new": len(pending), "resumed": len(done),
+                 "records_added": added, "block": counts["BLOCK"],
+                 "watch": counts["WATCH"], "pass": counts["PASS"],
+                 "seconds": round(time.time() - t0, 2)}, added)
+
     def ingest_file(self, path: str | Path, *, fmt: str = "auto",
                     column: str = "text", limit: int = 0) -> dict:
-        """处理一个文件。返回 {path, file_sha, n, block, watch, pass, status, seconds}。"""
+        """处理一个文件。chunked 打分 + 行级台账，支持断点续跑。
+
+        返回 {path, file_sha, n, new, resumed, block, watch, pass, status, seconds}。
+        - status="skipped"：整文件已完成（sha256 命中 & status=ok）；
+        - status="resumed"：该文件曾处理到一半（上次 running 中断），本次只处理剩余行；
+        - status="ok"：本次全部行（含续跑补的新行）。
+        """
         from .scan import load_rows  # 复用同一套读取逻辑（txt/csv/jsonl + row_id 语义）
 
         path = Path(path)
@@ -244,6 +315,10 @@ class Ingestor:
                     "reason": "该文件已处理过（sha256 命中台账）",
                     "n": 0, "block": 0, "watch": 0, "pass": 0, "seconds": 0.0}
 
+        cur = self.ledger.file_status(sha)
+        done = self.ledger.done_rows(sha) if (cur == "running" and self.resume) else set()
+        resuming = bool(done) and self.resume
+
         self.ledger.begin(sha, str(path), model=self.model,
                           pkg_sha=self.pkg_sha, threshold=self.threshold)
         try:
@@ -254,28 +329,19 @@ class Ingestor:
                 return {"path": str(path), "file_sha": sha, "status": "empty",
                         "n": 0, "block": 0, "watch": 0, "pass": 0,
                         "seconds": round(time.time() - t0, 2)}
-            res = self.scorer.score(texts, explain=self.explain)
-            results = res.get("results") or []
-            ts = time.time()
-            verdicts: list[Verdict] = []
-            for i, r in enumerate(results):
-                score = float(r.get("score", 0.0))
-                verdicts.append(Verdict(row_id=int(rows[i]["row_id"]), text=texts[i],
-                                        score=score, flag=self.decide(score),
-                                        views=r.get("views") or {}))
-            payloads = [v.as_row(source=str(path), model=self.model,
-                                 pkg_sha=self.pkg_sha, threshold=self.threshold, ts=ts)
-                        for v in verdicts]
-            for flag in FLAGS:
-                self._write(flag, [p for p in payloads if p["flag"] == flag])
-            added = self.ledger.add_records(
-                [(sha, v.row_id, text_sha(v.text), v.score, v.flag) for v in verdicts], ts)
-            self.ledger.finish(sha, len(verdicts), "ok")
-            counts = {f.lower(): sum(1 for v in verdicts if v.flag == f) for f in FLAGS}
-            return {"path": str(path), "file_sha": sha, "status": "ok",
-                    "n": len(verdicts), "records_added": added,
-                    "block": counts["block"], "watch": counts["watch"],
-                    "pass": counts["pass"], "seconds": round(time.time() - t0, 2)}
+            pending = [r for r in rows if r["row_id"] not in done]
+            if not pending:
+                self.ledger.finish(sha, len(rows), "ok")
+                counts = self.ledger.flag_counts(sha)
+                return {"path": str(path), "file_sha": sha, "status": "resumed",
+                        "reason": "台账中已含全部行，无需重打分",
+                        "n": len(rows), "new": 0, "resumed": len(done),
+                        "records_added": 0, "block": counts["BLOCK"],
+                        "watch": counts["WATCH"], "pass": counts["PASS"],
+                        "seconds": round(time.time() - t0, 2)}
+            result, _ = self._process_rows(sha, path, rows, done=done, t0=t0)
+            result["resumed"] = len(done)
+            return result
         except Exception as e:  # 单文件失败不阻塞整批
             self.ledger.finish(sha, 0, "error")
             return {"path": str(path), "file_sha": sha, "status": "error",

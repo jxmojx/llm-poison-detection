@@ -1016,6 +1016,7 @@ ARG_DEFAULTS = {
     "threshold": None, "bundle": None, "verify_ed25519": None,
     "ledger_dir": "outputs/ingest", "out_dir": "outputs/ingest",
     "watch": False, "poll": 10.0, "max_files": 0, "no_explain": False,
+    "resume": False, "flush_every": 512,
     "struct_c": 1.0,
     "struct_seed": 42,
 }
@@ -1205,6 +1206,10 @@ def build_parser() -> argparse.ArgumentParser:
                            help="从文件读取 HMAC 密钥")
             p.add_argument("--ledger-dir", dest="ledger_dir", default="outputs/ingest",
                            help="判决台账(sqlite)目录")
+            p.add_argument("--resume", action="store_true",
+                           help="断点续跑：上次 running(=处理中断)的文件只处理台账里未判决的行")
+            p.add_argument("--flush-every", dest="flush_every", type=int, default=512,
+                           help="每 N 行写一次台账/落盘（越小进度越细，越大越快）")
             p.add_argument("--out-dir", dest="out_dir", default="outputs/ingest",
                            help="隔离/人审/放行 jsonl 的输出目录")
             p.add_argument("--watch", action="store_true",
