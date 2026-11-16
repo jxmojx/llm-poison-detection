@@ -990,6 +990,7 @@ ARG_DEFAULTS = {
     "port": 8000,
     "student": None,
     "input": None,
+    "source": None,
     "format": "auto",
     "column": "text",
     "threshold": None,
@@ -1254,8 +1255,12 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--limit-examples", dest="limit_examples", type=int, default=20,
                            help="md 报告 BLOCK 样例上限")
         if name == "scan":
-            p.add_argument("--input", required=True,
-                           help="待扫描文件：txt(一行一句) / csv / tsv / jsonl")
+            p.add_argument("--input", required=False,
+                           help="待扫描文件：txt(一行一句) / csv / tsv / jsonl；"
+                                "或用 --source 指定远程数据源")
+            p.add_argument("--source", dest="source", default=None,
+                           help="数据源 spec：hf://repo[/split] / dvc://path[@rev] / "
+                                "s3://bucket/key；指定后覆盖 --input")
             p.add_argument("--format", default="auto",
                            choices=["auto", "txt", "csv", "jsonl"],
                            help="输入格式（默认按扩展名推断）")
@@ -1631,6 +1636,34 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "scan":
         from .scan import cmd_scan
 
+        src = getattr(args, "source", None)
+        if src:
+            # 远程数据源 adapter：materialize 成本地临时文本再走统一 scan 链路
+            import tempfile
+
+            from .datasource import load_rows_source
+
+            rows, kind = load_rows_source(
+                src, column=getattr(args, "column", "text"),
+                limit=int(getattr(args, "limit", 0) or 0))
+            if not rows:
+                print(f"[scan] --source 无有效文本行: {src}")
+                raise SystemExit(2)
+            tmp = tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", suffix=".txt", delete=False)
+            for r in rows:
+                tmp.write(r["text"] + "\n")
+            tmp.close()
+            import os
+            import copy as _copy
+
+            new_args = _copy.copy(args)
+            new_args.input = tmp.name
+            new_args.source = None
+            try:
+                return cmd_scan(cfg, new_args)
+            finally:
+                os.unlink(tmp.name)
         cmd_scan(cfg, args)
     elif args.cmd == "keygen":
         from .deploy import generate_ed25519_keypair
