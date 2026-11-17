@@ -192,10 +192,20 @@ python -m poisonguard.cli stress --clean-source tnews --run-tag v3 --n-texts 100
 #   产物：outputs/metrics/stress_real_v3.json（吞吐数字必须灌缓存后采，否则是缓存方差不是能力）
 #   示例脚本：examples/ragcheck_demo.py 与 tests/test_{ragcheck,drift,parsers,chunking,vecdb,stress}.py
 
+# ⑦⑧⑨ 环节 36 深化三连（只读 poisonguard，仅新增产物；全部复用 outputs/cache 向量）
+#   ⑦ 融合三方式：python scripts/eval_fusion.py        （outputs/metrics/ragcheck_fusion.json + sensitivity_ragcheck.md）
+#      结果：fused_eq/fused_z 把 edit-norm AUROC 0.769→0.84、全局到 0.978，但 dev 校准 TPR@1% 0.1085→0.0005 崩
+#      → 简单分数融合提升排序、1%FPR 工作点需在融合分空间重新标定，不可直接用单检测器 dev 阈值部署
+#   ⑧ 改写鲁棒性：python scripts/robust_ragcheck.py   （outputs/metrics/robust_ragcheck.json）
+#      结果：syn/chr/mix 轻改写不塌陷（chr −0.07 / mix −0.04，改动 57%/59% 样本）→ OOS 边界在整句形态不在措辞
+#   ⑨ 跨检测器对照：python scripts/compare_ragcheck.py（outputs/metrics/compare_ragcheck.{json,md}）
+#      结果：编辑立足点 ragcheck 分离度 0.50 最干净（sup_tfidf 0.035）→ 三层级联 ragcheck→struct→sup_tfidf
+
 几个关键数字（CPU、crom、real_v3）：
 - 检索层 edit vs normal AUROC **0.769**（数字级 0.353 的反向失败被纠正）；TPR@1% **10.85%** = 数字级 0.056% 的 **194×**；edit/normal 均分 **~100× 分离**。
 - `ragcheck --rc-limit 400` 全流程 487s（12000 条参考语料检索）；`drift` 换域 afqmc 秒级出报告（KL 2.68 指向词汇轴 → Amber）。
 - `stress --real-encoder`：encoder 129 QPS、完整打分栈 46 QPS、检索一致性 46 QPS、**vecdb 查询 7787 QPS（0.13ms）——向量索引是事实核验里最快的循环**。
+- **环节 36 融合三方式（诚实结论）**：fused_eq / fused_z（z 加和 / 0.7·base+0.3·rag）把 edit-vs-normal AUROC **0.769 → 0.84**、全家族 AUROC 到 **0.978**（简单分数融合显著提升排序质量）；但 dev 校准 **TPR@1% 0.1085 → 0.0005 崩**（edit 召回@1% 同步 0.0025）——base 的 tfidf 高分把干净 dev 的 q99 阈值抬高、融合分在 test edit 上整体低于阈值 = **融合分尺度 q99 失配**，fused_rank（排名平均）在异构尺度下直接反向（0.17）。→ **不可直接部署**，需在融合分空间重新标定 1%FPR 或走双闸门（ragcheck 粗筛 + fused 分排序复核）。
 
 
 **关键机制发现（对落地方向最有价值）**：词面法对"内容级篡改"的抓取能力不是常数，而是**句长/信息密度的函数**——afqmc 平均 13 字，单点编辑会改掉句子里高权重的字符 n-gram（如「借呗/先息/等额」），sup_tfidf 对 edit 召回直接到 0.674；iflytek 289 字长句，单点替换淹没在几百个 n-gram 里（0.014）。→ **RAG 碎片 / QA / 评论等短文本域，词面法就够强；长文档域必须依赖语义判官层**。完整数字见 [`docs/实验报告_iflytek.md`](docs/实验报告_iflytek.md) 与 [`docs/实验报告_afqmc.md`](docs/实验报告_afqmc.md)。
@@ -459,5 +469,6 @@ python -m poisonguard.train_qwen_lora --eval-only --adapter outputs/qwen/lora-ad
 20. **人审台是内网工具，不是产品**：`review`（`poisonguard/review.py`，环节 24）单页读队列、键盘判定、理由码落 sqlite、可导出 CSV，但**没有鉴权**（别暴露公网）、没有批量操作与撤销、没有多人分派；理由码是封闭集，业务扩展要改 `REASONS`。它存在的意义是把「判完的结论」变成 C4 可用的标签。
 21. **误报闭环只能估「拦截精度」，估不了漏报率**：`feedback`（`poisonguard/feedback.py`，环节 25）用「被判 BLOCK/WATCH 且人审 benign」的比例做在线 FPR，配 Wilson 区间与最小样本门槛（默认 30，不足就明确说「不下结论」）；影子阈值只给建议、并把「放过多少误报 vs 丢多少确认毒」同时摆出来。但人只审被拦下的样本——**系统放过的没人看，这是选择偏差**，要估漏报必须对 PASS 队列抽样送审。
 22. **检索式事实核验只对"in-KB 篡改"负责**（`ragcheck`，环节 30）：它把被检文本对**已可信的参考语料**做近重复+事实改动核验（edit AUROC 0.769、TPR@1% 10.85%）——这正是 RAG 向量库"改写库内文档再灌回去"这种 vector-store-write 投毒场景；但它**天然得 0 分**于 template/paraphrase/subtle/backdoor/ood（不与任何库内句近重复、或改写幅度>0.75 ratio 阈值）。这不是缺陷而是分层：检索层管"改了库里的东西"，语义层（判官）管"看起来无害但有毒"。所以检索分**不并入融合分数**，避免把 OOS 家族拉向 0 而虚高全局 AUROC。
+   - **环节 36 的三条边界更新**（`scripts/eval_fusion.py` / `robust_ragcheck.py` / `compare_ragcheck.py`，产物见 `outputs/metrics/ragcheck_fusion.json`、`robust_ragcheck.json`、`compare_ragcheck.md`）：① 简单分数融合（eq/z）排序更强（edit-norm AUROC **0.769→0.84**、全局 0.978）但 **1%FPR 校准工作点失效**（TPR@1% 0.1085→0.0005）——融合分尺度的干净侧 q99 阈值失配，**不能用单检测器 dev 阈值直接部署**，需在融合分空间重标定或走双闸门；② 轻改写（syn/chr/mix）**不塌陷**（chr −0.07 / mix −0.04，且变换确实生效：改了 57%/59% 样本）——**OOS 边界是「整句形态」不是「措辞」**，句内近重复闸门照常命中，真正 OOS 的是 template/paraphrase/subtle 整句脱离句式的重写；③ 跨检测器同切片对照（edit 正 vs normal 负）论定 ragcheck 是编辑立足点**分数带最干净的粗筛层**（edit−normal 分离度 0.5025 vs sup_tfidf 0.035、struct_qwen 0.296 召回、qwen_logprob 过度自信 0.0）→ 推荐 **ragcheck→struct→sup_tfidf 三层级联**（低成本粗筛 + 语义精判 + 词面保底），详见 `docs/优化环节清单.md` 环节 36。
 23. **解析器/分块/向量库都有明确边界**（`parsers`/`chunking`/`vecdb`，环节 32-34）：PDF 只抽文字流，**扫描版/图片页无 OCR** 拿不到文本；分块是"按句+重叠"的启发式，未做语义边界（标题/段落锚点）；向量库是**零重依赖的线性全扫**（brute/sklearn），参考集到十万/百万级要换 faiss/HNSW（`backend` 槽已留，接口不动）。
 24. **吞吐数字是"灌缓存后"的 CPU 口径**（`stress`，环节 35）：scorer 20.62ms p50 / 46 QPS、vecdb 0.13ms / 7787 QPS 都是把编码器缓存热了之后采的——冷缓存 p99 会到 826ms/2405ms，那不是能力是缓存方差；GPU/批量推理会把 encoder 从 129 QPS 再提一个量级。首次跑 `--real-encoder` 必须先热一遍再采数，否则自欺。
