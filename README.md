@@ -200,6 +200,10 @@ python -m poisonguard.cli stress --clean-source tnews --run-tag v3 --n-texts 100
 #      结果：syn/chr/mix 轻改写不塌陷（chr −0.07 / mix −0.04，改动 57%/59% 样本）→ OOS 边界在整句形态不在措辞
 #   ⑨ 跨检测器对照：python scripts/compare_ragcheck.py（outputs/metrics/compare_ragcheck.{json,md}）
 #      结果：编辑立足点 ragcheck 分离度 0.50 最干净（sup_tfidf 0.035）→ 三层级联 ragcheck→struct→sup_tfidf
+#   ⑩ KB 闭环（把参考语料变成可交付知识库）：python scripts/kb_loop.py build --kb-dir outputs/kb
+#      python scripts/kb_loop.py selfcheck --kb-dir outputs/kb   # 内置自检：原文 0.0 / 篡改 0.956 / 命中率 1.0 → PASS
+#      python scripts/kb_loop.py smoke --kb-dir outputs/kb       # 一条龙出 outputs/kb/authenticity_report.md
+#      python scripts/kb_loop.py check --kb-dir outputs/kb --file x.txt --csv outputs/kb/report.csv
 
 几个关键数字（CPU、crom、real_v3）：
 - 检索层 edit vs normal AUROC **0.769**（数字级 0.353 的反向失败被纠正）；TPR@1% **10.85%** = 数字级 0.056% 的 **194×**；edit/normal 均分 **~100× 分离**。
