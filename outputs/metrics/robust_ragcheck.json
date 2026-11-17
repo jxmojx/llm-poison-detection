@@ -1,0 +1,104 @@
+{
+  "meta": {
+    "task": "t2-robust_ragcheck",
+    "encoder": "crom",
+    "corpus_source": "train",
+    "corpus_n": 12000,
+    "top_k": 5,
+    "min_ratio": 0.75,
+    "aggregate": "max",
+    "n_edit": 100,
+    "n_normal": 100,
+    "seed": 42,
+    "fpr": 0.01
+  },
+  "per_method": {
+    "none": {
+      "edit": {
+        "n": 100,
+        "mean": 0.538513,
+        "max": 1.21202,
+        "frac_pos": 0.56
+      },
+      "normal": {
+        "n": 100,
+        "mean": 0.0,
+        "max": 0.0,
+        "frac_pos": 0.0
+      },
+      "changed_frac_edit": 0.0,
+      "changed_frac_normal": 0.0,
+      "fpr1_threshold": 0.0,
+      "detect_rate_at_fpr1": 0.56,
+      "flag_retention_on_baseline_hits": 1.0,
+      "edit_minus_normal_mean": 0.5385,
+      "delta_vs_baseline": 0.0
+    },
+    "syn": {
+      "edit": {
+        "n": 100,
+        "mean": 0.539163,
+        "max": 1.21202,
+        "frac_pos": 0.56
+      },
+      "normal": {
+        "n": 100,
+        "mean": 0.0,
+        "max": 0.0,
+        "frac_pos": 0.0
+      },
+      "changed_frac_edit": 0.02,
+      "changed_frac_normal": 0.05,
+      "fpr1_threshold": 0.0,
+      "detect_rate_at_fpr1": 0.56,
+      "flag_retention_on_baseline_hits": 1.0,
+      "edit_minus_normal_mean": 0.5392,
+      "delta_vs_baseline": 0.0
+    },
+    "chr": {
+      "edit": {
+        "n": 100,
+        "mean": 0.466231,
+        "max": 1.19393,
+        "frac_pos": 0.49
+      },
+      "normal": {
+        "n": 100,
+        "mean": 0.0,
+        "max": 0.0,
+        "frac_pos": 0.0
+      },
+      "changed_frac_edit": 0.57,
+      "changed_frac_normal": 0.65,
+      "fpr1_threshold": 0.0,
+      "detect_rate_at_fpr1": 0.49,
+      "flag_retention_on_baseline_hits": 0.875,
+      "edit_minus_normal_mean": 0.4662,
+      "delta_vs_baseline": -0.07
+    },
+    "mix": {
+      "edit": {
+        "n": 100,
+        "mean": 0.497104,
+        "max": 1.193051,
+        "frac_pos": 0.52
+      },
+      "normal": {
+        "n": 100,
+        "mean": 0.0,
+        "max": 0.0,
+        "frac_pos": 0.0
+      },
+      "changed_frac_edit": 0.59,
+      "changed_frac_normal": 0.69,
+      "fpr1_threshold": 0.0,
+      "detect_rate_at_fpr1": 0.52,
+      "flag_retention_on_baseline_hits": 0.9286,
+      "edit_minus_normal_mean": 0.4971,
+      "delta_vs_baseline": -0.04
+    }
+  },
+  "baseline_detect_rate_at_fpr1": 0.56,
+  "baseline_flag_retention": 1.0,
+  "conclusion": "基线(none)@1%FPR 检出率 = 0.5600；syn 检出率 0.5600→0.5600（Δ +0.0000，edit 均分 0.5392，变更率 0.02，基线命中存留 1.00）；chr 检出率 0.5600→0.4900（Δ -0.0700，edit 均分 0.4662，变更率 0.57，基线命中存留 0.88）；mix 检出率 0.5600→0.5200（Δ -0.0400，edit 均分 0.4971，变更率 0.59，基线命中存留 0.93）。收盘：syn/chr/mix 均未让 edit 检出塌陷（检出率保持 0.56 上下，变化仅在 -0.07 量级）——**改写型 OOS 边界在「轻改写」下并不生效**：edit 起点本身就是库内篡改，syn/chr/mix 只是句子内部措辞/字符级改动，不改动「整体形态即库内近重复」这一事实，近重复闸门仍命中、事实点差异仍被检出；真正让检索层 OOS 的是 template/paraphrase/subtle 这类整句层面脱离库内句式的重写（它们基线即 0 分）。即：OOS 边界是「整句形态」边界，不是「措辞」边界。"
+}

@@ -1,0 +1,59 @@
+{
+  "meta": {
+    "task": "A1 fusion calibration fix",
+    "branch": "feat/rag-guard",
+    "encoder": "crom",
+    "corpus_source": "train",
+    "corpus_n": 12000,
+    "aggregate": "max",
+    "top_k": 5,
+    "min_ratio": 0.75,
+    "n_dev_clean": 2000,
+    "n_test": 2953,
+    "seconds": 33.4,
+    "method": "dev-fit mu/sigma applied to test; q99 threshold from fused dev"
+  },
+  "fusion_by_method": {
+    "fused_eq_w0.5": {
+      "w_base": 0.5,
+      "note": "等权 z：dev-fit μ/σ 套 test",
+      "stats": {
+        "mu_base": 0.08985818938352168,
+        "sd_base": 0.04557311331836677,
+        "mu_rag": 0.0004889332791592212,
+        "sd_rag": 0.02186029384951877
+      },
+      "auroc_all": 0.9781,
+      "edit_norm_auroc": 0.84,
+      "threshold_dev_q99": 1.8395004515434288,
+      "tpr_at_fpr1_dev": 0.911,
+      "edit_recall_dev": 0.5575,
+      "normal_fpr_dev": 0.0275,
+      "mean_fused_dev": -0.0,
+      "mean_fused_test": 6.2515
+    },
+    "fused_z_w0.7base": {
+      "w_base": 0.7,
+      "note": "加权 z(0.7 base + 0.3 rag)：dev-fit μ/σ 套 test",
+      "stats": {
+        "mu_base": 0.08985818938352168,
+        "sd_base": 0.04557311331836677,
+        "mu_rag": 0.0004889332791592212,
+        "sd_rag": 0.02186029384951877
+      },
+      "auroc_all": 0.9789,
+      "edit_norm_auroc": 0.8401,
+      "threshold_dev_q99": 2.5842471409776517,
+      "tpr_at_fpr1_dev": 0.911,
+      "edit_recall_dev": 0.5575,
+      "normal_fpr_dev": 0.0275,
+      "mean_fused_dev": -0.0,
+      "mean_fused_test": 7.4446
+    }
+  },
+  "reference_old_eval": {
+    "fused_eq_old": 0.0005,
+    "fused_z_old": 0.0,
+    "ragcheck_alone_edit": 0.5425
+  }
+}

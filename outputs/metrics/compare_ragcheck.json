@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "purpose": "argument / 编辑投毒立足点上 ragcheck 增量价值的跨检测器同切片对照",
+    "slice": "real_v3 test: edit(正) vs normal(干净负侧)",
+    "generated_by": "scripts/compare_ragcheck.py",
+    "sources": {
+      "sup_tfidf_scores": "outputs/metrics/test_scores_real_v3.npz",
+      "struct": "outputs/metrics/struct_real_v3.json",
+      "ragcheck": "outputs/metrics/ragcheck_real_v3.json",
+      "qwen_logprob": "outputs/metrics/judge_real_v3.json"
+    }
+  },
+  "rows": [
+    {
+      "detector": "sup_tfidf",
+      "edit_recall_at_fpr1": 0.046,
+      "auroc": 0.6941,
+      "edit_mean_minus_normal_mean": 0.035,
+      "edit_n": 500,
+      "normal_n": 2844,
+      "basis": "全量 real_v3 test（retained），逐条分数重算，阈值在 normal 干净侧标定 FPR=1%",
+      "edit_mean": 0.1196,
+      "normal_mean": 0.0846
+    },
+    {
+      "detector": "struct_qwen",
+      "edit_recall_at_fpr1": 0.296,
+      "auroc": 0.9266,
+      "edit_mean_minus_normal_mean": null,
+      "edit_n": 500,
+      "normal_n": null,
+      "basis": "原报告值；AUROC=0.9266 为主评价掩码口径(全部正族 vs normal+hardneg)，edit 召回=0.296 为 dev-clean 校准到 FPR≈1% 阈值上；逐条分数未缓存，分离度 N/A"
+    },
+    {
+      "detector": "ragcheck",
+      "edit_recall_at_fpr1": 0.1085,
+      "auroc": 0.7690625,
+      "edit_mean_minus_normal_mean": 0.5025,
+      "edit_n": 400,
+      "normal_n": 400,
+      "basis": "原报告值；edit_norm_auroc=0.7691 即 edit vs normal 切片；整体 tpr@1%FPR=0.1085 —— 除 edit 外其余正族(模板/改写/微改/后门)冲突分恒为 0，故该 tpr 即为 edit 家族生效召回；mean 为 limit=400 抽样封顶的均值",
+      "edit_mean": 0.5069,
+      "normal_mean": 0.0044
+    },
+    {
+      "detector": "qwen_logprob",
+      "edit_recall_at_fpr1": 0.0,
+      "auroc": 0.6885,
+      "edit_mean_minus_normal_mean": null,
+      "edit_n": 40,
+      "normal_n": null,
+      "basis": "参考行：抽样 320 条中小样本，edit 仅 40 条；auroc=0.6885 为子集口径，edit 召回 devcal 阈值=0.0，固定 0.5 工作点=0.525；均值未缓存，分离度 N/A",
+      "edit_recall_at_0p5": 0.525
+    }
+  ],
+  "conclusion_zh": "在'编辑投毒'（对原文事实点的定向改写）这个立足点上，四个检测器各有所长与硬伤：\n\n1. sup_tfidf（词面有监督分）—— 全局 AUROC 最高（0.938），但本切片 edit 家族召回只有 0.046（tnews 合成口径亦仅 0.040），edit_mean-normal_mean 分离度仅 0.035。原因：编辑改写保留原文大部分词面与 tf-idf 结构，词袋向量几乎不动，靠词面根本区分不开；它是『泛化击杀』，在编辑立足点上接近失效。\n\n2. struct_qwen（冻结主干语义表征 + 二分类头）—— edit 召回 0.296、AUROC 0.9266，在编辑立足点上明显强于 sup_tfidf：它看的是深层语义表征而非词面，能抓住改写后的 『语义漂移』。弱点是逐条分数没落盘、难做端到端解释，且仍会漏掉 70% 的编辑样本（语义漂移不够大时和正常文本区分不开）。\n\n3. ragcheck（检索一致性，in-KB 锚定）—— edit 召回@1%FPR 0.1085，edit-vs-normal AUROC 0.7691，edit 冲突分数均值 0.507 对 normal 0.004，分离度 0.50，是四者里编辑/normal 分数带最干净的。它只对『改数字/事实词导致与参考语料冲突』的样本生效（模板/改写/微改/后门冲突分恒 0），定位精确但覆盖面窄：只能抓 in-KB 的编辑，事后外推/纯新增事实抓不到；且召回绝对值不高，单打独斗当主判官会漏。\n\n4. qwen_logprob —— 抽样 320 条（edit 仅 40 条）作参考：AUROC 0.6885、devcal 阈值下 edit 召回 0.0，固定 0.5 工作点 0.525。表现受小样本与 logprob 过度自信（阈值被推到 0.97）拖累，不宜单独作为编辑投毒的判据。\n\n互补组合建议：≪ragcheck 先筛、struct 再判≫。ragcheck 只用模糊检索 + 冲突计数，单条成本远低于 Qwen 编码（实测 487s / 4000+ 条级），适合做第一道粗筛：把冲突分高的候选（edit 样本其 mean_score 0.507 远高于 normal 0.004）先拎出来挡住『事实点被篡改』类；对粗筛漏掉或需要解释的样本，再用 struct_qwen 的语义表征做第二道判定，补上 ragcheck 『in-KB 锚定』之外因改写太像原句、或超出参考语料覆盖面而漏掉的编辑。词面 sup_tfidf 作为第三层仅用于压低误报，不承担编辑召回。三层级联 =低成本粗筛（ragcheck：抓 in-KB 编辑）+ 语义精判（struct：抓语义漂移）+ 词面保底。\n"
+}

@@ -41,3 +41,6 @@ outputs/feedback/
 .acc_p03/
 .acc_log/
 outputs/gate/
+
+outputs/kb/
+outputs/kb_probe*.txt
