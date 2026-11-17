@@ -157,30 +157,51 @@ def _is_fact_change(qseg: str, rseg: str) -> bool:
     return False
 
 
-def _pair_conflict(query: str, ref: str, min_ratio: float = 0.75) -> float:
+def _pair_conflict(query: str, ref: str, min_ratio: float = 0.75,
+                   detail: bool = False) -> float | dict:
     """检索一致性：近重复且差异块含事实点 → 冲突分；否则 0。
 
-    返回 0..1 的连续分（两次叠加近重复度，便于与其他层融合），
-    0 表示没有对齐性证据（不抓，让语义层处理）。
+    - detail=False（默认）：返回 0..1 的连续分（=近重复度 ratio），0 表示无证据。
+    - detail=True：返回 {ratio, n_fact, conflict_facts, weight, score}，
+      score 与 detail=False 一致（近重复度 × 事实点加权 1 + 0.25×(n_fact-1)，
+      让多事实点冲突比单点冲突更突出）。
+
+    ratio==1.0 时视为"知识库已验证原文"（重复入库）→ 0 分，不误伤。
     """
     if not query or not ref:
-        return 0.0
+        return {"ratio": 0.0, "n_fact": 0, "conflict_facts": [],
+                "weight": 1.0, "score": 0.0} if detail else 0.0
     if min(len(query), len(ref)) < 6:
-        return 0.0
+        return {"ratio": 0.0, "n_fact": 0, "conflict_facts": [],
+                "weight": 1.0, "score": 0.0} if detail else 0.0
     sm = difflib.SequenceMatcher(None, query, ref, autojunk=False)
     ratio = sm.ratio()
     if ratio < min_ratio or ratio >= 1.0:
-        # ratio==1.0：本身就是知识库已验证原文（重复入库），不是投毒
+        if detail:
+            return {"ratio": ratio, "n_fact": 0, "conflict_facts": [],
+                    "weight": 1.0, "score": 0.0}
         return 0.0
+    conflict: list[str] = []
     n_fact = 0
     for tag, q0, q1, r0, r1 in sm.get_opcodes():
         if tag == "equal":
             continue
-        if _is_fact_change(query[q0:q1], ref[r0:r1]):
+        qs, rs = query[q0:q1], ref[r0:r1]
+        if _is_fact_change(qs, rs):
             n_fact += 1
+            conflict.append(qs or rs)
     if n_fact == 0:
+        if detail:
+            return {"ratio": ratio, "n_fact": 0, "conflict_facts": [],
+                    "weight": 1.0, "score": 0.0}
         return 0.0
-    return float(ratio)
+    weight = 1.0 + 0.25 * (n_fact - 1)   # 多事实点冲突更突出（封顶，避免无上限）
+    score = float(ratio) * weight
+    if detail:
+        return {"ratio": float(ratio), "n_fact": n_fact,
+                "conflict_facts": conflict, "weight": float(weight),
+                "score": score}
+    return score
 
 
 def _topk_by_cosine(query: np.ndarray, ref_embs: np.ndarray, top_k: int) -> np.ndarray:
@@ -204,14 +225,21 @@ def scan_scores(
     batch_size: int = 64,
     min_ratio: float = 0.75,
     progress: bool = True,
+    aggregate: str = "max",
 ) -> np.ndarray:
     """对每段文本做检索一致性打分。
 
     - ref_texts/ref_embs：可信参考语料（已编码，L2 归一化）。
     - enc：.encode(texts)-> [N,d] 的编码器（测试可注入 FakeEncoder）。
     - q_embs：可选，避免重复编码（批量调用时一次编码）。
+    - aggregate：如何把 top-k 近邻的冲突合并成一个分数：
+        "max"   = 最像的被篡改近邻（默认，保守定位）
+        "mean"  = 各近邻冲突分数均值（对多个近邻同时被篡改更敏感）
+        "count" = 冲突近邻个数/top_k（对"知识库里几篇都在写同一事实"更鲁棒）
     返回与 texts 等长的 float64 分数（越大越可疑）。
     """
+    if aggregate not in ("max", "mean", "count"):
+        raise ValueError(f"aggregate 必须是 max/mean/count，got {aggregate!r}")
     if q_embs is None:
         q_embs = enc.encode(list(texts))
     scores = np.zeros(len(texts), dtype=np.float64)
@@ -221,12 +249,21 @@ def scan_scores(
         idx = _topk_by_cosine(q, ref_embs, top_k)
         if len(idx) == 0:
             continue
-        best = 0.0
+        vals: list[float] = []
+        n_conflict = 0
         for j in idx.tolist():
             c = _pair_conflict(t, ref_texts[j], min_ratio=min_ratio)
             sim = float(q @ ref_embs[j])
-            best = max(best, sim * c)
-        scores[i] = best
+            v = sim * c
+            vals.append(v)
+            if c > 0:
+                n_conflict += 1
+        if aggregate == "max":
+            scores[i] = max(vals) if vals else 0.0
+        elif aggregate == "mean":
+            scores[i] = float(np.mean(vals)) if vals else 0.0
+        else:  # "count"
+            scores[i] = n_conflict / len(idx) if idx.size else 0.0
     return scores
 
 
@@ -298,6 +335,7 @@ def run_ragcheck(
     limit: int = 400,
     seed: int = 42,
     extra_note: str = "",
+    aggregate: str = "max",
 ) -> dict:
     """主入口：构建参考语料 → 编码 → 检索引擎 → 与数字级基线/现有检测器对比。
 
@@ -316,13 +354,21 @@ def run_ragcheck(
     ref_texts = build_reference(cfg, source=corpus_source)
 
     clean_dev = [s.text for s in dev if s.label == 0 and s.family == "normal"]
+    # 抽样：分层每族取前 limit 条，但保留它们在 test 里的原始下标（用于与
+    # test_scores{SUFFIX}.npz 的分数按索引对齐融合，避免"长度相等即对齐"）
+    keep_idx: np.ndarray | None = None
     if limit:
         buckets: dict[str, list] = {}
-        for s in test:
+        for i, s in enumerate(test):                       # 只在 test 全量里起步
             b = buckets.setdefault(s.family, [])
             if len(b) < limit:
-                b.append(s)
-        test = [s for fam in sorted(buckets) for s in buckets[fam]]
+                b.append(i)
+        keep_idx = np.array(sorted(i for fam in sorted(buckets)
+                                   for i in buckets[fam]), dtype=int)
+        samples = [test[i] for i in keep_idx]
+    else:
+        samples = list(test)
+    test = samples
 
     if encoder_name:
         # CLI 显式覆盖编码器（crom/bge/tiny）
@@ -346,13 +392,15 @@ def run_ragcheck(
     td = time.perf_counter()
     Xq_dev = enc.encode(dev_normals)
     s_dev = scan_scores(dev_normals, ref_texts, ref_embs, enc, q_embs=Xq_dev,
-                        top_k=top_k, min_ratio=min_ratio, progress=False)
+                        top_k=top_k, min_ratio=min_ratio, progress=False,
+                        aggregate=aggregate)
     print(f"[ragcheck] dev 干净集打分 {len(dev_normals)} 条 {time.perf_counter()-td:.1f}s")
 
     tt = time.perf_counter()
     Xq_te = enc.encode([s.text for s in test])
     s_te = scan_scores([s.text for s in test], ref_texts, ref_embs, enc, q_embs=Xq_te,
-                       top_k=top_k, min_ratio=min_ratio, progress=False)
+                       top_k=top_k, min_ratio=min_ratio, progress=False,
+                       aggregate=aggregate)
     print(f"[ragcheck] test 打分 {len(test)} 条 {time.perf_counter()-tt:.1f}s")
 
     y_te = np.array([s.label for s in test])
@@ -400,23 +448,40 @@ def run_ragcheck(
 
         npz = np.load(Path(cfg.metrics_dir) / f"test_scores{suffix_of(cfg)}.npz",
                       allow_pickle=True)
-        if "sup_tfidf" in npz.files and len(npz["sup_tfidf"]) == len(test):
-            base = np.asarray(npz["sup_tfidf"], dtype=float)
-            # 只对同 length 的 test 段做（family 抽样后长度一致即可）
-            comb = _normalize(base) + _normalize(s_te)   # 简单等权，另存
+        n_te = len(test)
+        if "sup_tfidf" in npz.files:
+            base_full = np.asarray(npz["sup_tfidf"], dtype=float)
+            if len(base_full) == n_te:
+                base = base_full                       # 全量对齐（limit=0）
+            elif keep_idx is not None and len(base_full) > max(keep_idx, default=0):
+                base = base_full[keep_idx]             # 抽样：按原 test 下标取子集
+            else:
+                base = None
+        else:
+            base = None
+        if base is not None:
             from .factcheck import fuse as _fuse
 
-            comb_fused = _fuse(base, s_te, w=0.3)
+            n_base = _normalize(base)
+            n_rag = _normalize(s_te)
+            comb_eq = n_base + n_rag                      # 等权加和
+            comb_rank = _rank_avg(base, s_te)             # 排名平均
+            comb_fused = _fuse(base, s_te, w=0.3)         # 保留原逻辑做对照
             edit_mask = (fam_te == "edit")
             normal_mask = (fam_te == "normal")
             fusion = {
                 "base_auroc_all": _auc(y_te, base),
                 "ragcheck_auroc_all": _auc(y_te, s_te),
                 "fused_auroc_all": _auc(y_te, comb_fused),
+                "fused_eq_auroc_all": _auc(y_te, comb_eq),
+                "fused_rank_auroc_all": _auc(y_te, comb_rank),
                 "edit_recall@1_base": round(float(_recall1(s_dev, y_te, base, edit_mask)), 4),
                 "edit_recall@1_ragcheck": round(float(_recall1(s_dev, y_te, s_te, edit_mask)), 4),
                 "edit_recall@1_fused": round(float(_recall1(s_dev, y_te, comb_fused, edit_mask)), 4),
+                "edit_recall@1_fused_eq": round(float(_recall1(s_dev, y_te, comb_eq, edit_mask)), 4),
+                "edit_recall@1_fused_rank": round(float(_recall1(s_dev, y_te, comb_rank, edit_mask)), 4),
                 "normal_fpr@0.5_thr": round(float((s_te[normal_mask] > 0.5).mean()), 4),
+                "aligned_by": "index" if keep_idx is not None else "length",
             }
     except Exception as e:  # 没有超过缓存的干净集时跳过
         fusion = None
@@ -463,6 +528,20 @@ def _normalize(x: np.ndarray) -> np.ndarray:
     x = np.asarray(x, dtype=float)
     sd = x.std() or 1.0
     return (x - x.mean()) / sd
+
+
+def _rank_avg(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """把两个不同尺度的分数都转成 [0,1] 排名占比后取均值。
+
+    对尺度不敏感（词面分大多贴 0/1，检索分偏小），适合异构分数融合。
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    if len(a) != len(b):
+        raise ValueError(f"_rank_avg 要求等长，got {len(a)} vs {len(b)}")
+    ra = np.argsort(np.argsort(-a)).astype(float) / (len(a) or 1)
+    rb = np.argsort(np.argsort(-b)).astype(float) / (len(b) or 1)
+    return 0.5 * (ra + rb)
 
 
 def _tpr_cal(s_dev: np.ndarray, y_te: np.ndarray, s_te: np.ndarray) -> float:

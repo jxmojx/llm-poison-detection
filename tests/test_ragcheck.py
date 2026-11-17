@@ -16,9 +16,9 @@ import numpy as np
 
 from poisonguard.encoders import TinyEncoder
 from poisonguard.ragcheck import (_FACT_WORDS, _is_fact_change, _pair_conflict,
-                                  _topk_by_cosine, build_reference, explain,
-                                  extract_facts, fact_points, run_ragcheck,
-                                  scan_scores)
+                                  _rank_avg, _topk_by_cosine, build_reference,
+                                  explain, extract_facts, fact_points,
+                                  run_ragcheck, scan_scores)
 
 
 # ---------------------------------------------------------------- 事实点抽取
@@ -154,3 +154,83 @@ def test_build_reference_missing_processed_raises():
 
 def test_run_ragcheck_importable():
     assert callable(run_ragcheck)
+
+
+# ---------------------------------------------------------------- 深化 1：聚合方式
+def test_scan_scores_aggregate_accepts_variants():
+    ref = ["今年报名人数首次突破1300万人，同比增长30%"]
+    adv = "今年报名人数首次突破1300亿人，同比增长30%"
+    enc = TinyEncoder()
+    ref_embs = enc.encode(ref)
+    for mode in ("max", "mean", "count"):
+        s = scan_scores([adv], ref, ref_embs, enc, top_k=1, aggregate=mode)
+        assert s.shape == (1,)
+        assert s[0] >= 0.0
+    # 非法值需明确报错
+    try:
+        scan_scores([adv], ref, ref_embs, enc, aggregate="bogus")
+        assert False, "应抛 ValueError"
+    except ValueError:
+        pass
+
+
+def test_scan_scores_count_aggregate_saturates():
+    # 两个近邻都被篡改 → count 聚合给 1.0（2/2）
+    refs = ["今年报名人数首次突破1300万人，同比增长30%",
+            "央行今日将开展1300亿元逆回购操作"]
+    adv = "今年报名人数首次突破1300亿人，同比增长30%"
+    enc = TinyEncoder()
+    ref_embs = enc.encode(refs)
+    s = scan_scores([adv], refs, ref_embs, enc, top_k=2, aggregate="count",
+                    min_ratio=0.6)
+    assert s[0] >= 0.5, f"count 聚合应大量命中，got {s[0]}"
+
+
+# ---------------------------------------------------------------- 深化 2：细粒度冲突
+def test_pair_conflict_detail_shape():
+    a = "今年报名人数首次突破1300万人"
+    b = "今年报名人数首次突破1300亿人"
+    d = _pair_conflict(a, b, detail=True)
+    assert isinstance(d, dict)
+    assert set(d) == {"ratio", "n_fact", "conflict_facts", "weight", "score"}
+    assert d["n_fact"] >= 1
+    assert d["score"] == _pair_conflict(a, b)
+    # 完全一致 → ratio==1.0 视为重复入库不判冲突
+    d2 = _pair_conflict(a, a, detail=True)
+    assert d2["score"] == 0.0 and d2["n_fact"] == 0
+
+
+def test_pair_conflict_detail_multifacts_weighted():
+    # 两个数字都改动 → weight>1（多事实点更突出）
+    a = "今年报名1300万人增长30%"
+    b = "今年报名1400万人增长50%"
+    d = _pair_conflict(a, b, detail=True)
+    assert d["n_fact"] >= 2
+    assert d["weight"] > 1.0
+
+
+# ---------------------------------------------------------------- 深化 3：排名平均融合
+def test_rank_avg_preserves_order_and_bounds():
+    a = np.array([0.9, 0.5, 0.1])
+    b = np.array([0.2, 0.8, 0.4])
+    out = _rank_avg(a, b)
+    assert out.shape == (3,)
+    assert (out >= 0).all() and (out <= 1).all()
+    # _rank_avg = 「小于它的元素占比」的平均（分数越高占比越小）。
+    # 位置2：a=0.1（2/3）b=0.4（1/3）→ 平均 0.5 最大
+    assert out.argmax() == 2
+    assert out[0] == 1 / 3 and out[1] == 1 / 6  # 0.9→0/3、0.5→1/3、0.1→2/3；b: 0.2→2/3、0.8→0/3、0.4→1/3
+    # 等长报错
+    try:
+        _rank_avg(np.array([1.0]), np.array([0.0, 1.0]))
+        assert False, "应抛 ValueError"
+    except ValueError:
+        pass
+
+
+def test_rank_avg_equal_scores_tie_handled():
+    a = np.array([1.0, 1.0, 0.0])
+    b = np.array([0.0, 0.0, 1.0])
+    out = _rank_avg(a, b)
+    # 平局时靠 argsort 稳定处理，不抛异常且范围仍合法
+    assert (out >= 0).all() and (out <= 1).all()

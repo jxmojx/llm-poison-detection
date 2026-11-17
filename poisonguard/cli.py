@@ -1152,6 +1152,9 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--rc-limit", dest="rc_limit", type=int, default=400,
                            help="每个家族抽样条数(0=全量)")
             p.add_argument("--rc-seed", dest="rc_seed", type=int, default=42)
+            p.add_argument("--rc-aggregate", dest="rc_aggregate", default="max",
+                           choices=("max", "mean", "count"),
+                           help="近邻冲突聚合方式：max(默认)/mean/count")
         if name == "drift":
             p.add_argument("--input", dest="drift_input", required=True,
                            help="待体检的输入文件（txt/csv；每行=一条）")
@@ -1510,7 +1513,8 @@ def main(argv: list[str] | None = None) -> int:
                      min_ratio=float(getattr(args, "rc_min_ratio", 0.75) or 0.75),
                      corpus_source=getattr(args, "rc_corpus", "train"),
                      limit=int(getattr(args, "rc_limit", 0) or 0),
-                     seed=int(getattr(args, "rc_seed", 42) or 42))
+                     seed=int(getattr(args, "rc_seed", 42) or 42),
+                     aggregate=getattr(args, "rc_aggregate", "max") or "max")
     elif args.cmd == "drift":
         from .drift import run_drift_check
 
