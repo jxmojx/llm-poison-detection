@@ -1,0 +1,48 @@
+{
+  "meta": {
+    "task": "A2 dual-gateway",
+    "branch": "feat/rag-guard",
+    "encoder": "crom",
+    "corpus_source": "train",
+    "corpus_n": 12000,
+    "aggregate": "max",
+    "top_k": 5,
+    "min_ratio": 0.75,
+    "n_dev_clean": 2000,
+    "n_test": 2953,
+    "gate1": "ragcheck score>0 冲突命中",
+    "gate2_threshold": 0.254062613248825,
+    "gate2_threshold_source": "dev-clean sup_tfidf q99",
+    "seconds": 29.6
+  },
+  "gate1": {
+    "threshold": 0.0,
+    "dev_fpr": 0.0005,
+    "test_hit_rate": 0.0742,
+    "test_hit_n": 219,
+    "hit_edit_frac": 0.5425
+  },
+  "gate2": {
+    "threshold": 0.254062613248825,
+    "fpr_target": 0.01
+  },
+  "verdict_counts": {
+    "BLOCK": 9,
+    "WATCH": 210,
+    "PASS": 2734
+  },
+  "confusion_edit_vs_normal": {
+    "tp_block": 9,
+    "fp_block": 0,
+    "watch_pos": 208,
+    "watch_neg": 2,
+    "pass_pos": 183,
+    "pass_neg": 398,
+    "n_edit": 400,
+    "n_normal": 400,
+    "edit_recall_block": 0.0225,
+    "normal_precision_block": 1.0,
+    "normal_fpr_block": 0.0
+  },
+  "interpretation": "双闸门：ragcheck 命中(score>0)才送主检测器；命中子集上 sup_tfidf>q99 判 BLOCK，否则 WATCH；未命中直接 PASS。两层独立校准，避免尺度错位（A1）。"
+}
